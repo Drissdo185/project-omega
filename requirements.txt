@@ -1,0 +1,21 @@
+# core
+openai>=1.0.0
+pinecone-client>=4.1.2
+rapidfuzz>=3.9.0
+
+# web back end
+fastapi>=0.95.0
+uvicorn[standard]>=0.22.0
+
+# front end
+streamlit>=1.38.0          # interactive UI
+
+# utils
+python-dotenv>=1.0.0
+pydantic>=1.10.0
+httpx>=0.24.0
+pypdf>=3.10.0
+pdfplumber>=0.7.5
+tiktoken>=0.4.0
+requests>=2.31.0
+loguru>=0.7.0
