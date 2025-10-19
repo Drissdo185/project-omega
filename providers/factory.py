@@ -7,7 +7,6 @@ from typing import Dict, Type
 
 from providers.base import BaseProvider
 from providers.openai import OpenAIProvider
-from providers.anthropic import AnthropicProvider
 from exceptions import VisionModelError, ConfigurationError
 from core.config import get_settings
 
@@ -22,7 +21,7 @@ class ProviderFactory:
     # Registry of providers
     _providers: Dict[str, Type[BaseProvider]] = {
         'openai': OpenAIProvider,
-        'anthropic': AnthropicProvider,
+        
     }
 
     @classmethod

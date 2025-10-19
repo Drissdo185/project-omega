@@ -1,5 +1,5 @@
 """
-OpenAI vision provider using GPT-4o.
+OpenAI vision provider using GPT-5.
 """
 
 import logging
