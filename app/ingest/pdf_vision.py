@@ -20,12 +20,15 @@ class VisionPDFProcessor(BaseProcessor):
         render_scale: float = 2.0,
         jpeg_quality: int = 90,
         max_image_size: tuple = (1400, 1400),
-        storage_root: str = "./flex_rag_data_location"
+        storage_root: str = None
     ):
+        if storage_root is None:
+            storage_root = os.environ.get("FLEX_RAG_DATA_LOCATION", "./flex_rag_data_location")
+    
+        self.storage_root = Path(storage_root)
         self.render_scale = render_scale
         self.jpeg_quality = jpeg_quality
         self.max_image_size = max_image_size
-        self.storage_root = Path(storage_root)
         self.documents_dir = self.storage_root / "documents"
         self.cache_dir = self.storage_root / "cache" / "summaries"
 

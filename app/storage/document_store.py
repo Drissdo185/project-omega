@@ -11,7 +11,10 @@ from app.models.document import Document, DocumentStatus
 class DocumentStore:
     """Storage manager for vision-based document structure"""
 
-    def __init__(self, storage_root: str = "app/flex_rag_data_location"):
+    def __init__(self, storage_root: str = None):
+        if storage_root is None:
+            storage_root = os.environ.get("FLEX_RAG_DATA_LOCATION", "./flex_rag_data_location")
+    
         self.storage_root = Path(storage_root)
         self.documents_dir = self.storage_root / "documents"
         self.cache_dir = self.storage_root / "cache" / "summaries"

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is an AI-powered PDF Q&A system that uses vision-based RAG (Retrieval Augmented Generation) to answer questions from HR and IT documentation. The system converts PDF pages to images, classifies documents into categories (HR/IT/Other), performs fuzzy search, and generates strict context-based answers using Azure OpenAI.
+This is an AI-powered PDF Q&A system that uses vision-based RAG (Retrieval Augmented Generation) 
 
 ## Environment Setup
 

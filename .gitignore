@@ -174,3 +174,4 @@ test_output/
 
 .claude/
 data/
+flex_rag_data_location/
