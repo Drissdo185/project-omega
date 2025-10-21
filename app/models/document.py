@@ -1,6 +1,6 @@
 # app/models/document.py
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from enum import Enum
 
@@ -44,8 +44,8 @@ class Document:
     pages: List[Page] = field(default_factory=list)
     status: DocumentStatus = DocumentStatus.PROCESSING
     summary: Optional[str] = None  # Vision-generated summary
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     
     def to_dict(self) -> dict:
         return {

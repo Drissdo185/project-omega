@@ -26,8 +26,7 @@ async def main():
     processor = ProcessorFactory.create_processor(pdf_path)
     pages = await processor.process(pdf_path)
     
-    # Show results
-    print(f"✅ Processed {len(pages)} pages:\n")
+    
     for page in pages:
         size_kb = Path(page.image_path).stat().st_size / 1024
         print(f"  Page {page.page_number}: {page.width}x{page.height}px, {size_kb:.1f}KB")
