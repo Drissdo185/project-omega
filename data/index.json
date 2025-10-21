@@ -1,0 +1,23 @@
+[
+  {
+    "path": "data\\HR\\hr.json",
+    "title": "hr.pdf",
+    "label": "HR",
+    "num_sections": 47,
+    "created_at": "2025-10-19T03:13:30.874383"
+  },
+  {
+    "path": "data\\IT\\it-pocily.json",
+    "title": "it-pocily.pdf",
+    "label": "IT",
+    "num_sections": 11,
+    "created_at": "2025-10-19T03:17:21.702572"
+  },
+  {
+    "path": "data\\Other\\BOI.json",
+    "title": "BOI.pdf",
+    "label": "Other",
+    "num_sections": 11,
+    "created_at": "2025-10-19T03:39:39.754750"
+  }
+]
