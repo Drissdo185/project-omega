@@ -6,14 +6,15 @@ from typing import List, Optional, Dict
 from loguru import logger
 
 from app.models.document import Document, DocumentStatus
+from .base import BaseStorage
 
 
-class DocumentStore:
+class DocumentStore(BaseStorage):
     """Storage manager for vision-based document structure"""
 
     def __init__(self, storage_root: str = None):
         if storage_root is None:
-            storage_root = os.environ.get("FLEX_RAG_DATA_LOCATION", "./flex_rag_data_location")
+            storage_root = os.environ.get("FLEX_RAG_DATA_LOCATION", "./app/flex_rag_data_location")
     
         self.storage_root = Path(storage_root)
         self.documents_dir = self.storage_root / "documents"
@@ -59,7 +60,7 @@ class DocumentStore:
         index = self.load_index()
         return [doc for doc in index if doc.get("folder") == folder]
 
-    def get_all_documents(self) -> List[Document]:
+    async def get_all_documents(self) -> List[Document]:
         """Load all documents from storage"""
         index = self.load_index()
         documents = []
@@ -72,6 +73,26 @@ class DocumentStore:
                     documents.append(doc)
 
         return documents
+
+    async def get_document(self, doc_id: str) -> Optional[Document]:
+        """Get a specific document by ID (async version of load_document)"""
+        return self.load_document(doc_id)
+
+    async def save_document(self, document: Document) -> bool:
+        """Save a document to storage"""
+        try:
+            doc_dir = self.documents_dir / document.id
+            doc_dir.mkdir(parents=True, exist_ok=True)
+
+            metadata_path = doc_dir / "metadata.json"
+            with open(metadata_path, "w", encoding="utf-8") as f:
+                json.dump(document.to_dict(), f, indent=2, ensure_ascii=False)
+
+            self._update_index_entry(document)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save document {document.id}: {e}")
+            return False
 
     def delete_document(self, doc_id: str) -> bool:
         """Delete a document and update the index"""
