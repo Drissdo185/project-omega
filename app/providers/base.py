@@ -14,8 +14,8 @@ class BaseProvider(ABC):
     async def process_text_messages(
         self,
         messages: List[Dict[str, str]],
-        max_tokens: int = 1000,
-        temperature: float = 0.7,
+        max_tokens: int = 2000,
+        
         **kwargs
     ) -> str:
         """
@@ -24,7 +24,6 @@ class BaseProvider(ABC):
         Args:
             messages: List of message dicts with 'role' and 'content'
             max_tokens: Maximum tokens to generate
-            temperature: Sampling temperature
             **kwargs: Additional provider-specific parameters
 
         Returns:
@@ -36,8 +35,7 @@ class BaseProvider(ABC):
     async def process_multimodal_messages(
         self,
         messages: List[Dict[str, Any]],
-        max_tokens: int = 1000,
-        temperature: float = 0.7,
+        max_tokens: int = 2000,
         **kwargs
     ) -> str:
         """
@@ -47,7 +45,6 @@ class BaseProvider(ABC):
             messages: List of message dicts with multimodal content
                      Content can include 'type': 'text' or 'image_path'
             max_tokens: Maximum tokens to generate
-            temperature: Sampling temperature
             **kwargs: Additional provider-specific parameters
 
         Returns:

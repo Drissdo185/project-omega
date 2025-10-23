@@ -50,7 +50,6 @@ class OpenAIProvider(BaseProvider):
         self,
         messages: List[Dict[str, str]],
         max_tokens: int = 1000,
-        temperature: float = 0.7,
         **kwargs
     ) -> str:
         """Process text-only messages"""
@@ -59,7 +58,6 @@ class OpenAIProvider(BaseProvider):
                 model=self.model_name,
                 messages=messages,
                 max_tokens=max_tokens,
-                temperature=temperature,
                 **kwargs
             )
 
@@ -77,7 +75,6 @@ class OpenAIProvider(BaseProvider):
         self,
         messages: List[Dict[str, Any]],
         max_tokens: int = 1000,
-        temperature: float = 0.7,
         **kwargs
     ) -> str:
         """Process multimodal messages (text + images)"""
@@ -89,7 +86,6 @@ class OpenAIProvider(BaseProvider):
                 model=self.model_name,
                 messages=formatted_messages,
                 max_tokens=max_tokens,
-                temperature=temperature,
                 **kwargs
             )
 

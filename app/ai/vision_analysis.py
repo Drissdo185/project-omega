@@ -91,7 +91,7 @@ class VisionAnalysisService:
             response = await self.provider.process_multimodal_messages(
                 messages=messages,
                 max_tokens=2000 if detailed else 1000,
-                temperature=0.3
+        
             )
             
             # Parse the structured response
@@ -113,7 +113,7 @@ class VisionAnalysisService:
                 detailed_content="",
                 labels=PageLabel(
                     page_number=page.page_number,
-                    content_type=ContentType.UNKNOWN
+                    content_type=ContentType.TEXT
                 )
             )
     
@@ -154,11 +154,26 @@ class VisionAnalysisService:
                 cost = self.provider.get_last_cost() or 0.0
                 total_cost += cost
             
-            # Generate overall document summary and classification
-            doc_analysis = await self._synthesize_document_analysis(
-                document, page_analyses
+            # Collect all topics from page analyses
+            all_topics = []
+            for pa in page_analyses:
+                all_topics.extend(pa.labels.topics)
+            unique_topics = list(set(all_topics))
+
+            # Create document analysis directly without synthesis
+            doc_analysis = DocumentAnalysis(
+                document_id=document.id,
+                document_name=document.name,
+                category=DocumentCategory.GENERAL,  # Default category
+                overall_summary=f"Document with {len(page_analyses)} pages analyzed",
+                page_analyses=page_analyses,
+                document_topics=unique_topics,
+                metadata={
+                    "page_count": document.page_count,
+                    "folder": document.folder
+                },
+                total_cost=total_cost
             )
-            doc_analysis.total_cost = total_cost + (self.provider.get_last_cost() or 0.0)
             
             # Save analysis to JSON
             self._save_analysis(doc_analysis)
@@ -170,88 +185,6 @@ class VisionAnalysisService:
         except Exception as e:
             logger.error(f"Failed to analyze document {document.id}: {e}")
             raise
-    
-    async def _synthesize_document_analysis(
-        self,
-        document: Document,
-        page_analyses: List[PageAnalysis]
-    ) -> DocumentAnalysis:
-        """
-        Synthesize overall document analysis from page analyses
-        """
-        try:
-            # Collect all topics and entities
-            all_topics = []
-            all_entities = []
-            
-            for pa in page_analyses:
-                all_topics.extend(pa.labels.topics)
-                all_entities.extend(pa.labels.entities)
-            
-            # Deduplicate
-            unique_topics = list(set(all_topics))
-            unique_entities = list(set(all_entities))
-            
-            # Build synthesis prompt
-            summaries = "\n".join([
-                f"Page {pa.page_number}: {pa.summary}"
-                for pa in page_analyses
-            ])
-            
-            prompt = f"""Based on the following page summaries, provide:
-1. A comprehensive overall summary of the document (2-3 sentences)
-2. The document category (choose one: hr_policy, it_manual, financial, legal, general, unknown)
-
-Page summaries:
-{summaries}
-
-Respond in JSON format:
-{{
-    "overall_summary": "...",
-    "category": "..."
-}}"""
-            
-            messages = [
-                {"role": "system", "content": "You are a document classification expert."},
-                {"role": "user", "content": prompt}
-            ]
-            
-            response = await self.provider.process_text_messages(
-                messages=messages,
-                max_tokens=500,
-                temperature=0.3
-            )
-            
-            # Parse response
-            synthesis = self._parse_json_response(response)
-            
-            category = DocumentCategory(synthesis.get("category", "unknown"))
-            overall_summary = synthesis.get("overall_summary", "Document summary not available")
-            
-            return DocumentAnalysis(
-                document_id=document.id,
-                document_name=document.name,
-                category=category,
-                overall_summary=overall_summary,
-                page_analyses=page_analyses,
-                document_topics=unique_topics,
-                document_entities=unique_entities,
-                metadata={
-                    "page_count": document.page_count,
-                    "folder": document.folder
-                }
-            )
-            
-        except Exception as e:
-            logger.error(f"Failed to synthesize document analysis: {e}")
-            # Return minimal analysis
-            return DocumentAnalysis(
-                document_id=document.id,
-                document_name=document.name,
-                category=DocumentCategory.UNKNOWN,
-                overall_summary="Synthesis failed",
-                page_analyses=page_analyses
-            )
     
     def _build_detailed_analysis_prompt(self, context: str = "") -> str:
         """Build prompt for detailed page analysis"""
@@ -298,7 +231,6 @@ Respond in JSON format:
                 page_number=page_number,
                 content_type=ContentType(data.get("content_type", "text")),
                 topics=data.get("topics", []),
-                has_sensitive_info=data.get("has_sensitive_info", False),
                 language=data.get("language", "en"),
                 confidence_score=data.get("confidence_score", 0.8)
             )
