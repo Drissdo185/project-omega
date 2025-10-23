@@ -6,10 +6,11 @@ from typing import List, Dict, Any, Optional
 from loguru import logger
 from openai import OpenAI
 import openai
+from dotenv import load_dotenv
 
 from .base import BaseProvider
 
-
+load_dotenv()
 class OpenAIProvider(BaseProvider):
     """
     OpenAI provider for LLM interactions
@@ -30,8 +31,8 @@ class OpenAIProvider(BaseProvider):
             base_url: Base URL for API endpoint (defaults to OPENAI_BASE_URL env var)
             model: Model name to use
         """
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
-        self.base_url = base_url or os.environ.get("OPENAI_BASE_URL", "https://aiportalapi.stu-platform.live/use")
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.base_url = base_url or os.getenv("OPENAI_BASE_URL", "https://aiportalapi.stu-platform.live/use")
         self.model_name = model
 
         if not self.api_key:
