@@ -1,0 +1,271 @@
+{
+  "document_id": "doc_426d6cff1147",
+  "document_name": "TrinhBinhNguyen_CV.pdf",
+  "category": "general",
+  "overall_summary": "Document with 2 pages analyzed",
+  "page_analyses": [
+    {
+      "page_number": 1,
+      "summary": "This page is a resume for Trinh Binh Nguyen, an AI Engineer specializing in Natural Language Processing and Large Language Models. It highlights his education, extensive technical skills, and work experience with Innotech Vietnam Corporation, including roles as a Fresher AI Engineer and Intern AI Engineer.",
+      "detailed_content": "The document is the first page of a resume, starting with the candidate's name and contact information, followed by a professional summary outlining their AI expertise. It then details their education at International University (IU) – VNU HCMC, including a B.Sc. in Data Science and GPA. A comprehensive list of technical skills is provided, categorized by area such as Programming, AI/NLP, Big Data & Cloud, Data Visualization, and Software Development. The page concludes with a detailed 'Work Experience' section, describing responsibilities and achievements in two roles at Innotech Vietnam Corporation, focusing on LLM optimization, context engineering, and chat-based coding applications.",
+      "labels": {
+        "page_number": 1,
+        "content_type": "mixed",
+        "topics": [
+          "AI Engineering",
+          "Natural Language Processing",
+          "Large Language Models",
+          "Data Science",
+          "Technical Skills",
+          "Work Experience",
+          "Software Development",
+          "Prompt Engineering",
+          "Context Engineering"
+        ],
+        "language": "en",
+        "confidence_score": 0.98
+      },
+      "extracted_data": {
+        "name": "TRINH BINH NGUYEN",
+        "title": "AI ENGINEER",
+        "contact_information": {
+          "phone": "0888570208",
+          "email": "trinhbinhnguyen308@gmail.com",
+          "linkedin": "www.linkedin.com/in/nguyentrinh308",
+          "github": "https://github.com/NguyenTrinh3008"
+        },
+        "education": {
+          "institution": "INTERNATIONAL UNIVERSITY (IU) – VNU HCMC",
+          "degree": "B.Sc. in Data Science",
+          "gpa": "3.5/4",
+          "location": "Ho Chi Minh City",
+          "dates": "Sep 2021 – 2025"
+        },
+        "technical_skills": {
+          "programming": [
+            "Python",
+            "SQL",
+            "Java"
+          ],
+          "ai_nlp": [
+            "Scikit-learn",
+            "PyTorch",
+            "TensorFlow",
+            "MCP (Model Context Protocol)",
+            "AutoGen",
+            "Prompt Engineering",
+            "Context Optimization"
+          ],
+          "big_data_cloud": [
+            "Apache Spark",
+            "PostgreSQL",
+            "MongoDB",
+            "AWS S3"
+          ],
+          "data_visualization": [
+            "Matplotlib",
+            "Seaborn",
+            "Plotly",
+            "Power BI"
+          ],
+          "software_development": [
+            "FastAPI",
+            "Streamlit",
+            "Docker",
+            "Gitlab CI/CD"
+          ]
+        },
+        "work_experience": [
+          {
+            "job_title": "Fresher, AI Engineer",
+            "company": "Innotech Vietnam Corporation",
+            "location": "Ho Chi Minh City, Vietnam",
+            "dates": "August 2025 – Present",
+            "responsibilities": [
+              "Built multi-layer memory for InnoCody using LangChain's context-engineering patterns (write, select, compress, isolate) to deliver just-in-time context per agent step.",
+              "Implemented short-term state + checkpointing (LangGraph-style) and long-term semantic memory (temporal knowledge graph + graph-vector store) for cross-session recall.",
+              "Added selective retrieval (temporal subgraphs, persona/task-scoped pulls) and context compression (periodic summarization, post-tool compaction).",
+              "Context compression: periodic summarization + post-tool compaction to tame token-heavy outputs; preserved key decisions while cutting tokens/latency."
+            ],
+            "technologies": [
+              "Python",
+              "LangGraph concepts",
+              "vector/graph DB",
+              "Redis",
+              "Neo4J",
+              "FastAPI"
+            ]
+          },
+          {
+            "job_title": "Intern, AI Engineer",
+            "company": "Innotech Vietnam Corporation",
+            "location": "Ho Chi Minh City, Vietnam",
+            "project": "InnoCody (VS Code Extension)",
+            "dates": "June 2025 – August 2025",
+            "responsibilities": [
+              "Upgraded and optimized the LLM server to handle user requests, implementing prompt-engineering strategies that improved response efficiency by 30% and reduced token consumption by 50%, resulting in both higher quality answers and lower latency.",
+              "Designed and implemented a checkpoint feature for the chat-based coding application, ensuring session persistence and rapid recovery.",
+              "Applied MCP server integration to further enhance response performance and reduce operational costs."
+            ],
+            "product_link": "https://marketplace.visualstudio.com/items?itemName=innotechvn.innocody",
+            "technologies": [
+              "MCP",
+              "VS Code Extension API",
+              "Context Engineering",
+              "Large Language Models"
+            ]
+          }
+        ]
+      },
+      "timestamp": "2025-10-23T15:46:56.292006"
+    },
+    {
+      "page_number": 2,
+      "summary": "This page details the applicant's professional experience, personal projects, academic achievements, and additional skills. It covers roles in NLP, data science, and AI instruction, along with advanced machine learning projects.",
+      "detailed_content": "The page outlines professional experiences including an NLP role at Trolyhopdong.com, an upcoming Data Scientist internship at BA3, and a future Teaching Assistant position at International University. It then describes two significant projects: a Vietnamese Medical Question Answering system utilizing RAG and fine-tuned LLMs, and a Movie Recommendation System based on vector embeddings. The applicant also highlights an academic achievement, the 'Encouraging Study Award,' and lists language proficiencies (Vietnamese, English) and certifications (Machine Learning, Data Engineer). Many of the listed experiences and projects have future completion dates.",
+      "labels": {
+        "page_number": 2,
+        "content_type": "text",
+        "topics": [
+          "NLP",
+          "Data Science",
+          "Artificial Intelligence",
+          "Machine Learning",
+          "Recommendation Systems",
+          "RAG",
+          "Chatbot",
+          "CI/CD",
+          "Docker",
+          "Python",
+          "Academic Achievement",
+          "Certifications"
+        ],
+        "language": "en",
+        "confidence_score": 0.98
+      },
+      "extracted_data": {
+        "experience": [
+          {
+            "title": "Contract Advisory Chatbot",
+            "organization": "Trolyhopdong.com",
+            "responsibilities": [
+              "Developed an NLP pipeline for preprocessing and extracting key information from contract texts, reducing end-to-end preprocessing time to 1-2 seconds.",
+              "Authored Dockerfiles and implemented GitLab CI/CD pipelines to enable scalable, continuous production deployments."
+            ],
+            "technologies": [
+              "Python",
+              "Natural Language Processing",
+              "Docker",
+              "FastAPI",
+              "GitLab CI/CD"
+            ],
+            "product_link": "https://trolyhopdong.com/"
+          },
+          {
+            "title": "Intern, Data Scientist",
+            "organization": "BA3, Ho Chi Minh City, Vietnam",
+            "start_date": "March 2025",
+            "end_date": "June 2025",
+            "responsibilities": [
+              "Built data crawlers using APIs from TikTok and Lazada to collect and analyze e-commerce trends.",
+              "Developed a dashboard with Python and Plotly to visualize product insights and user behavior.",
+              "Integrated LLMs to analyze product reviews and predict emerging trends in e-commerce.",
+              "Automated data reports and supported digital marketing with insights from customer feedback."
+            ]
+          },
+          {
+            "title": "Teaching Assistant - Artificial Intelligence",
+            "organization": "International University (IU) – VNU HCMC",
+            "start_date": "Sep 2024",
+            "end_date": "September 2025",
+            "responsibilities": [
+              "Assisted professors in teaching Artificial Intelligence concepts, improving student understanding through hands-on coding exercises and tutorials.",
+              "Conducted weekly review sessions for students, leading to a 20% increase in exam performance.",
+              "Provided one-on-one mentoring, resulting in higher student engagement and a 15% improvement in project scores."
+            ]
+          }
+        ],
+        "projects": [
+          {
+            "title": "Vietnamese Medical Question Answering for Pregnancy - Individual",
+            "start_date": "Sep 2024",
+            "end_date": "March 2025",
+            "description": [
+              "Developed an advanced Retrieval-Augmented Generation (RAG) system specifically for answering Vietnamese pregnancy-related medical queries.",
+              "Used hybrid search (semantic dense retrieval + BM25) and a cross-encoder reranker with MMR diversification.",
+              "Fine-tuned the Qwen 2.5-7B model for domain-specific language understanding, achieving a 20% performance improvement.",
+              "Designed an intelligent orchestrator agent for query decomposition, clarification, and chain-of-thought reasoning."
+            ]
+          },
+          {
+            "title": "Movie Recommendation System - Individual",
+            "end_date": "December 2024",
+            "description": [
+              "Designed and built a content-based recommendation system using vector embeddings and cosine similarity, improving recommendation accuracy by 15%.",
+              "Integrated MongoDB Atlas vector search for efficient and scalable retrieval.",
+              "Optimized embedding generation and search workflows, enhancing response time by 30%."
+            ]
+          }
+        ],
+        "achievements": [
+          {
+            "name": "ENCOURAGING STUDY AWARD - IU – VNU",
+            "date": "Sep 2022",
+            "description": "Received for achieving the highest academic score with the most credits in the Data Science department."
+          }
+        ],
+        "others": {
+          "languages": [
+            {
+              "name": "Vietnamese",
+              "proficiency": "native"
+            },
+            {
+              "name": "English",
+              "proficiency": "Intermediate"
+            }
+          ],
+          "certifications": [
+            {
+              "name": "AI4E - Machine Learning",
+              "year": "2024"
+            },
+            {
+              "name": "Data Engineer",
+              "year": "2024"
+            }
+          ]
+        }
+      },
+      "timestamp": "2025-10-23T15:47:08.189546"
+    }
+  ],
+  "document_topics": [
+    "NLP",
+    "Machine Learning",
+    "Docker",
+    "Software Development",
+    "Recommendation Systems",
+    "Natural Language Processing",
+    "RAG",
+    "Context Engineering",
+    "Artificial Intelligence",
+    "Large Language Models",
+    "CI/CD",
+    "Academic Achievement",
+    "Prompt Engineering",
+    "Certifications",
+    "Python",
+    "AI Engineering",
+    "Technical Skills",
+    "Data Science",
+    "Chatbot",
+    "Work Experience"
+  ],
+  "metadata": {
+    "page_count": 2,
+    "folder": "Other"
+  },
+  "analysis_timestamp": "2025-10-23T15:47:08.189631",
+  "total_cost": 0.03995
+}
