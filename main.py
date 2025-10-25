@@ -11,7 +11,7 @@ async def main():
     provider = create_provider_from_env()
     vision_service = VisionAnalysisService(provider)
 
-    document = await processor.process("/home/dtdat/Desktop/Project/project-omega/data/TrinhBinhNguyen_CV.pdf")
+    document = await processor.process("/home/dtdat/Desktop/Project/project-omega/data/1706.03762v7.pdf")
 
     analysis = await vision_service.analyze_document(document)
 

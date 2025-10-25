@@ -87,7 +87,6 @@ class DocumentAnalysis:
     document_id: str
     document_name: str
     overall_summary: str
-    page_analyses: Dict[str, Any] = field(default_factory=dict)  # Dict format: {"page_1": {...}, "page_2": {...}}
     total_cost: float = 0.0
 
     def to_dict(self) -> dict:
@@ -95,7 +94,7 @@ class DocumentAnalysis:
             "document_id": self.document_id,
             "document_name": self.document_name,
             "overall_summary": self.overall_summary,
-            "page_analyses": self.page_analyses,
+
             "total_cost": self.total_cost
         }
 
@@ -105,7 +104,6 @@ class DocumentAnalysis:
             document_id=data["document_id"],
             document_name=data["document_name"],
             overall_summary=data["overall_summary"],
-            page_analyses=data.get("page_analyses", {}),
             total_cost=data.get("total_cost", 0.0)
         )
     
