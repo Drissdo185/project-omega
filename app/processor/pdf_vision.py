@@ -48,52 +48,15 @@ class VisionPDFProcessor(BaseProcessor):
         pages_dir.mkdir(parents=True, exist_ok=True)
         return doc_dir
 
-    def _save_metadata(self, doc_dir: Path, document: Document):
-        """Save document metadata to metadata.json"""
-        metadata_path = doc_dir / "metadata.json"
-        with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump(document.to_dict(), f, indent=2, ensure_ascii=False)
-        logger.debug(f"Saved metadata to {metadata_path}")
 
-    def _update_index(self, document: Document):
-        """Update or create the global document index"""
-        index_path = self.documents_dir / "index.json"
-
-        # Load existing index
-        if index_path.exists():
-            with open(index_path, "r", encoding="utf-8") as f:
-                index = json.load(f)
-        else:
-            index = []
-
-        # Add or update document entry
-        index_entry = {
-            "id": document.id,
-            "name": document.name,
-            "page_count": document.page_count,
-            "status": document.status.value,
-            "created_at": document.created_at.isoformat(),
-            "updated_at": document.updated_at.isoformat()
-        }
-
-        # Remove existing entry if present
-        index = [e for e in index if e.get("id") != document.id]
-        index.append(index_entry)
-
-        # Save updated index
-        with open(index_path, "w", encoding="utf-8") as f:
-            json.dump(index, f, indent=2, ensure_ascii=False)
-
-        logger.debug(f"Updated index at {index_path}")
-
-    async def process(self, file_path: str, doc_id: Optional[str] = None, folder: str = "Other") -> Document:
+    async def process(self, file_path: str, doc_id: Optional[str] = None) -> Document:
         """
         Convert PDF pages to JPEG images and save in structured directory.
+        Note: Does NOT save metadata.json - that happens after analysis.
 
         Args:
             file_path: Path to the PDF file
             doc_id: Optional document ID (generated if not provided)
-            folder: Document category (HR, IT, Other)
 
         Returns:
             Document object with all metadata
@@ -159,21 +122,15 @@ class VisionPDFProcessor(BaseProcessor):
                 id=doc_id,
                 name=Path(file_path).name,
                 page_count=len(pages),
-                folder=folder,
                 pages=pages,
                 status=DocumentStatus.READY,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc)
             )
 
-            # Save metadata
-            self._save_metadata(doc_dir, document)
-
-            # Update global index
-            self._update_index(document)
-
             logger.info(f"Successfully processed {len(pages)} pages from {file_path}")
-            logger.info(f"Document saved to: {doc_dir}")
+            logger.info(f"Document directory: {doc_dir}")
+            logger.info(f"Metadata will be saved after analysis is complete")
 
             return document
 

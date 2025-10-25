@@ -55,10 +55,9 @@ class DocumentStore(BaseStorage):
             logger.error(f"Failed to load index: {e}")
             return []
 
-    def list_documents_by_folder(self, folder: str) -> List[Dict]:
-        """Get all documents for a specific folder (HR, IT, Other)"""
-        index = self.load_index()
-        return [doc for doc in index if doc.get("folder") == folder]
+    def list_all_documents(self) -> List[Dict]:
+        """Get all documents from index"""
+        return self.load_index()
 
     async def get_all_documents(self) -> List[Document]:
         """Load all documents from storage"""
@@ -151,7 +150,6 @@ class DocumentStore(BaseStorage):
         index_entry = {
             "id": document.id,
             "name": document.name,
-            "folder": document.folder,
             "page_count": document.page_count,
             "status": document.status.value,
             "created_at": document.created_at.isoformat(),

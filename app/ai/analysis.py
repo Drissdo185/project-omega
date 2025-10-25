@@ -21,6 +21,7 @@ class ContentType(str, Enum):
     FORM = "form"
     IMAGE = "image"
     MIXED = "mixed"
+    UNKNOWN = "unknown"
     
 
 @dataclass
@@ -57,30 +58,24 @@ class PageLabel:
 @dataclass
 class PageAnalysis:
     """Detailed analysis of a single page"""
-    
+
     page_number: int
-    summary: str  # Brief summary of page content
-    detailed_content: str  # Detailed extraction/description
     labels: PageLabel
     extracted_data: Dict[str, Any] = field(default_factory=dict)  # Structured data
     timestamp: datetime = field(default_factory=datetime.now)
-    
+
     def to_dict(self) -> dict:
         return {
             "page_number": self.page_number,
-            "summary": self.summary,
-            "detailed_content": self.detailed_content,
             "labels": self.labels.to_dict(),
             "extracted_data": self.extracted_data,
             "timestamp": self.timestamp.isoformat()
         }
-    
+
     @classmethod
     def from_dict(cls, data: dict) -> 'PageAnalysis':
         return cls(
             page_number=data["page_number"],
-            summary=data["summary"],
-            detailed_content=data["detailed_content"],
             labels=PageLabel.from_dict(data["labels"]),
             extracted_data=data.get("extracted_data", {}),
             timestamp=datetime.fromisoformat(data["timestamp"])
@@ -91,23 +86,16 @@ class DocumentAnalysis:
     """Complete analysis of a document"""
     document_id: str
     document_name: str
-    category: DocumentCategory
     overall_summary: str
-    page_analyses: Dict[str, Any] = field(default_factory=dict)  # Changed to dict format: {"page_1": [...], "page_2": [...]}
-    document_topics: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    analysis_timestamp: datetime = field(default_factory=datetime.now)
+    page_analyses: Dict[str, Any] = field(default_factory=dict)  # Dict format: {"page_1": {...}, "page_2": {...}}
     total_cost: float = 0.0
 
     def to_dict(self) -> dict:
         return {
             "document_id": self.document_id,
             "document_name": self.document_name,
-            "category": self.category.value,
             "overall_summary": self.overall_summary,
             "page_analyses": self.page_analyses,
-            "document_topics": self.document_topics,
-            "metadata": self.metadata,
             "total_cost": self.total_cost
         }
 
@@ -116,12 +104,8 @@ class DocumentAnalysis:
         return cls(
             document_id=data["document_id"],
             document_name=data["document_name"],
-            category=DocumentCategory(data["category"]),
             overall_summary=data["overall_summary"],
             page_analyses=data.get("page_analyses", {}),
-            document_topics=data.get("document_topics", []),
-            metadata=data.get("metadata", {}),
-            analysis_timestamp=datetime.fromisoformat(data["analysis_timestamp"]),
             total_cost=data.get("total_cost", 0.0)
         )
     

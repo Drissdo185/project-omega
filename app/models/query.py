@@ -9,6 +9,5 @@ class QueryResult:
     answer: str
     page_numbers: List[int]  # Pages used
     document_id: str
-    folder: str
     sources: List[Dict]  # Source details
     total_cost: float = 0.0

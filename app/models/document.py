@@ -44,7 +44,6 @@ class Document:
     name: str
     page_count: int
     pages: List[Page] = field(default_factory=list)
-    folder: str = "Other"
     status: DocumentStatus = DocumentStatus.PROCESSING
     summary: Optional[str] = None  # Vision-generated summary
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -61,14 +60,13 @@ class Document:
             "updated_at": self.updated_at.isoformat(),
             "pages": [p.to_dict() for p in self.pages]
         }
-    
+
     @classmethod
     def from_dict(cls, data: dict) -> 'Document':
         return cls(
             id=data["id"],
             name=data["name"],
             page_count=data["page_count"],
-            folder=data["folder"],
             status=DocumentStatus(data["status"]),
             summary=data.get("summary"),
             created_at=datetime.fromisoformat(data["created_at"]),
