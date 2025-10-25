@@ -92,26 +92,25 @@ class DocumentAnalysis:
     document_id: str
     document_name: str
     category: DocumentCategory
-    overall_summary: str  
-    page_analyses: List[PageAnalysis] = field(default_factory=list)
-    document_topics: List[str] = field(default_factory=list)  
+    overall_summary: str
+    page_analyses: Dict[str, Any] = field(default_factory=dict)  # Changed to dict format: {"page_1": [...], "page_2": [...]}
+    document_topics: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     analysis_timestamp: datetime = field(default_factory=datetime.now)
     total_cost: float = 0.0
-    
+
     def to_dict(self) -> dict:
         return {
             "document_id": self.document_id,
             "document_name": self.document_name,
             "category": self.category.value,
             "overall_summary": self.overall_summary,
-            "page_analyses": [pa.to_dict() for pa in self.page_analyses],
+            "page_analyses": self.page_analyses,
             "document_topics": self.document_topics,
             "metadata": self.metadata,
-            "analysis_timestamp": self.analysis_timestamp.isoformat(),
             "total_cost": self.total_cost
         }
-    
+
     @classmethod
     def from_dict(cls, data: dict) -> 'DocumentAnalysis':
         return cls(
@@ -119,7 +118,7 @@ class DocumentAnalysis:
             document_name=data["document_name"],
             category=DocumentCategory(data["category"]),
             overall_summary=data["overall_summary"],
-            page_analyses=[PageAnalysis.from_dict(pa) for pa in data.get("page_analyses", [])],
+            page_analyses=data.get("page_analyses", {}),
             document_topics=data.get("document_topics", []),
             metadata=data.get("metadata", {}),
             analysis_timestamp=datetime.fromisoformat(data["analysis_timestamp"]),

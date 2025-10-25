@@ -70,7 +70,6 @@ class VisionPDFProcessor(BaseProcessor):
         index_entry = {
             "id": document.id,
             "name": document.name,
-            "folder": document.folder,
             "page_count": document.page_count,
             "status": document.status.value,
             "created_at": document.created_at.isoformat(),

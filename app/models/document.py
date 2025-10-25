@@ -16,22 +16,25 @@ class Page:
     image_path: str  # Path to JPEG file
     width: Optional[int] = None
     height: Optional[int] = None
-    
+    summary: str = ""
+
     def to_dict(self) -> dict:
         return {
             "page_number": self.page_number,
             "image_path": self.image_path,
+            "summary": self.summary,
             "width": self.width,
             "height": self.height
         }
-    
+
     @classmethod
     def from_dict(cls, data: dict) -> 'Page':
         return cls(
             page_number=data["page_number"],
             image_path=data["image_path"],
             width=data.get("width"),
-            height=data.get("height")
+            height=data.get("height"),
+            summary=data.get("summary", "")
         )
 
 @dataclass
@@ -40,19 +43,18 @@ class Document:
     id: str
     name: str
     page_count: int
-    folder: str  # HR, IT, Other
     pages: List[Page] = field(default_factory=list)
+    folder: str = "Other"
     status: DocumentStatus = DocumentStatus.PROCESSING
     summary: Optional[str] = None  # Vision-generated summary
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
             "name": self.name,
             "page_count": self.page_count,
-            "folder": self.folder,
             "status": self.status.value,
             "summary": self.summary,
             "created_at": self.created_at.isoformat(),

@@ -6,6 +6,7 @@ Analyzes document images and generates summaries with labels
 import json
 from typing import List, Optional, Dict, Any
 from pathlib import Path
+from datetime import datetime
 from loguru import logger
 
 from app.models.document import Document, Page
@@ -34,11 +35,11 @@ class VisionAnalysisService:
             storage_root = os.environ.get("FLEX_RAG_DATA_LOCATION", "./app/flex_rag_data_location")
         
         self.storage_root = Path(storage_root)
-        self.analysis_dir = self.storage_root / "analysis"
-        self.analysis_dir.mkdir(parents=True, exist_ok=True)
-        
-        logger.info(f"VisionAnalysisService initialized with storage: {self.analysis_dir}")
-    
+        self.documents_dir = self.storage_root / "documents"
+        self.documents_dir.mkdir(parents=True, exist_ok=True)
+
+        logger.info(f"VisionAnalysisService initialized with storage: {self.documents_dir}")
+
     async def analyze_page(
         self,
         page: Page,
@@ -113,7 +114,7 @@ class VisionAnalysisService:
                 detailed_content="",
                 labels=PageLabel(
                     page_number=page.page_number,
-                    content_type=ContentType.TEXT
+                    content_type=ContentType.UNKNOWN
                 )
             )
     
@@ -142,23 +143,29 @@ class VisionAnalysisService:
             
             # Analyze each page
             pages_to_analyze = document.pages[:max_pages] if max_pages else document.pages
-            
+
             for page in pages_to_analyze:
                 # Provide context about the document
                 context = f"This is page {page.page_number} of {document.page_count} from '{document.name}' (Category: {document.folder})"
-                
+
                 page_analysis = await self.analyze_page(page, context, detailed)
                 page_analyses.append(page_analysis)
-                
+
                 # Track cost
                 cost = self.provider.get_last_cost() or 0.0
                 total_cost += cost
-            
+
             # Collect all topics from page analyses
             all_topics = []
             for pa in page_analyses:
                 all_topics.extend(pa.labels.topics)
             unique_topics = list(set(all_topics))
+
+            # Convert page_analyses list to dictionary format: {"page_1": [...], "page_2": [...]}
+            page_analyses_dict = {}
+            for pa in page_analyses:
+                page_key = f"page_{pa.page_number}"
+                page_analyses_dict[page_key] = pa.to_dict()
 
             # Create document analysis directly without synthesis
             doc_analysis = DocumentAnalysis(
@@ -166,7 +173,7 @@ class VisionAnalysisService:
                 document_name=document.name,
                 category=DocumentCategory.GENERAL,  # Default category
                 overall_summary=f"Document with {len(page_analyses)} pages analyzed",
-                page_analyses=page_analyses,
+                page_analyses=page_analyses_dict,
                 document_topics=unique_topics,
                 metadata={
                     "page_count": document.page_count,
@@ -276,46 +283,113 @@ class VisionAnalysisService:
             raise ValueError("No valid JSON found in response")
     
     def _save_analysis(self, analysis: DocumentAnalysis):
-        """Save document analysis to JSON file"""
+        """Save document analysis to metadata.json file"""
         try:
-            # Save to analysis directory
-            output_path = self.analysis_dir / f"{analysis.document_id}_analysis.json"
-            
+            # Save to documents directory
+            doc_dir = self.documents_dir / analysis.document_id
+            doc_dir.mkdir(parents=True, exist_ok=True)
+
+            output_path = doc_dir / "metadata.json"
+
+            # Load existing metadata if it exists
+            existing_data = {}
+            if output_path.exists():
+                with open(output_path, 'r', encoding='utf-8') as f:
+                    existing_data = json.load(f)
+
+            # Extract only analysis-specific fields (avoid duplicating document fields)
+            analysis_dict = analysis.to_dict()
+            analysis_fields = {
+                'summary': analysis_dict.get('overall_summary'),  # Map overall_summary to summary field
+                'page_analyses': analysis_dict.get('page_analyses'),
+                'total_cost': analysis_dict.get('total_cost')
+            }
+
+            # Merge only analysis fields with existing metadata
+            merged_data = {**existing_data, **analysis_fields}
+
             with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(analysis.to_dict(), f, indent=2, ensure_ascii=False)
-            
+                json.dump(merged_data, f, indent=2, ensure_ascii=False)
+
             logger.info(f"Saved analysis to: {output_path}")
-            
+
         except Exception as e:
             logger.error(f"Failed to save analysis: {e}")
     
     def load_analysis(self, document_id: str) -> Optional[DocumentAnalysis]:
-        """Load previously saved document analysis"""
+        """Load previously saved document analysis from metadata.json"""
         try:
-            analysis_path = self.analysis_dir / f"{document_id}_analysis.json"
+            metadata_path = self.documents_dir / document_id / "metadata.json"
             
-            if not analysis_path.exists():
+            if not metadata_path.exists():
                 return None
             
-            with open(analysis_path, 'r', encoding='utf-8') as f:
+            with open(metadata_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
-            return DocumentAnalysis.from_dict(data)
-            
+            # Check if analysis data exists in metadata
+            if 'page_analyses' not in data:
+                return None
+
+            # Reconstruct DocumentAnalysis from merged metadata
+            # DocumentAnalysis.from_dict expects document_id and document_name
+            # which are stored as 'id' and 'name' in the metadata
+            analysis_data = {
+                'document_id': data.get('id', document_id),
+                'document_name': data.get('name', ''),
+                'category': data.get('category', 'general'),
+                'overall_summary': data.get('overall_summary', ''),
+                'page_analyses': data.get('page_analyses', []),
+                'document_topics': data.get('document_topics', []),
+                'metadata': {
+                    'page_count': data.get('page_count'),
+                    'folder': data.get('folder')
+                },
+                'analysis_timestamp': data.get('analysis_timestamp', datetime.now().isoformat()),
+                'total_cost': data.get('total_cost', 0.0)
+            }
+
+            return DocumentAnalysis.from_dict(analysis_data)
+
         except Exception as e:
             logger.error(f"Failed to load analysis for {document_id}: {e}")
             return None
-    
+
     def get_all_analyses(self) -> List[DocumentAnalysis]:
-        """Load all saved document analyses"""
+        """Load all saved document analyses from metadata.json files"""
         analyses = []
-        
-        for analysis_file in self.analysis_dir.glob("*_analysis.json"):
+
+        # Iterate through all document directories
+        for doc_dir in self.documents_dir.iterdir():
+            if not doc_dir.is_dir() or doc_dir.name == "index.json":
+                continue
+
+            metadata_file = doc_dir / "metadata.json"
+            if not metadata_file.exists():
+                continue
+
             try:
-                with open(analysis_file, 'r', encoding='utf-8') as f:
+                with open(metadata_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    analyses.append(DocumentAnalysis.from_dict(data))
+
+                # Only include if analysis data exists
+                if 'page_analyses' in data:
+                    analysis_data = {
+                        'document_id': data.get('id', doc_dir.name),
+                        'document_name': data.get('name', ''),
+                        'category': data.get('category', 'general'),
+                        'overall_summary': data.get('overall_summary', ''),
+                        'page_analyses': data.get('page_analyses', {}),
+                        'document_topics': data.get('document_topics', []),
+                        'metadata': {
+                            'page_count': data.get('page_count'),
+                            'folder': data.get('folder')
+                        },
+                        'analysis_timestamp': data.get('analysis_timestamp', datetime.now().isoformat()),
+                        'total_cost': data.get('total_cost', 0.0)
+                    }
+                    analyses.append(DocumentAnalysis.from_dict(analysis_data))
             except Exception as e:
-                logger.error(f"Failed to load {analysis_file}: {e}")
-        
+                logger.error(f"Failed to load {metadata_file}: {e}")
+
         return analyses
