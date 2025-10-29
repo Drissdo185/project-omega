@@ -1,249 +1,285 @@
-# app/ui/streamlit_app.py
-import os
-import json
-import re
+"""
+Vision-based RAG System - Streamlit UI
+Upload PDFs and ask questions using AI vision analysis
+"""
+
+import asyncio
 import streamlit as st
-from app.chat.manager import process_user_message
-from app.storage.json_store import _load_index
+from pathlib import Path
+import tempfile
+import os
 
-# -------------------------------------------------
-# Streamlit Page Config
-# -------------------------------------------------
-st.set_page_config(page_title="AI PDF QA – Strict HR/IT Assistant", layout="wide")
+from app.processor.pdf_vision import VisionPDFProcessor
+from app.ai.vision_analysis import VisionAnalysisService
+from app.chat.chat_service import ChatService
+from app.providers.factory import create_provider_from_env
 
-# -------------------------------------------------
-# Initialize Session State
-# -------------------------------------------------
-defaults = {
-    "history": [],
-    "contexts_history": [],
-    "sources_history": [],
-    "call_log": [],
-    "user_input": "",
-    "clear_input_flag": False,
-}
-for k, v in defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
 
-# -------------------------------------------------
-# Sidebar — Conversation Timeline
-# -------------------------------------------------
-# in app/ui/streamlit_app.py — replace Sidebar Conversation Timeline block with this
+# Configure Streamlit page
+st.set_page_config(
+    page_title="Vision RAG - Document Q&A",
+    page_icon="📄",
+    layout="wide"
+)
 
-st.sidebar.header("📜 Conversation Timeline")
+# Initialize session state
+if 'chat_service' not in st.session_state:
+    st.session_state.chat_service = None
+if 'current_document' not in st.session_state:
+    st.session_state.current_document = None
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
+if 'processing' not in st.session_state:
+    st.session_state.processing = False
 
-log_path = os.path.join("logs", "call_log.json")
 
-# try to read file from disk every render (keeps UI in sync with manager writes)
-disk_call_log = []
-if os.path.exists(log_path):
+def initialize_services():
+    """Initialize chat service if not already done"""
+    if st.session_state.chat_service is None:
+        with st.spinner("Initializing services..."):
+            try:
+                st.session_state.chat_service = ChatService()
+                st.success("✅ Services initialized!")
+            except Exception as e:
+                st.error(f"❌ Failed to initialize: {e}")
+                return False
+    return True
+
+
+async def process_uploaded_file(uploaded_file):
+    """Process uploaded PDF file"""
     try:
-        with open(log_path, "r", encoding="utf-8") as f:
-            disk_call_log = json.load(f) or []
-            if not isinstance(disk_call_log, list):
-                disk_call_log = []
+        # Save uploaded file to temporary location
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+            tmp_file.write(uploaded_file.getbuffer())
+            tmp_path = tmp_file.name
+
+        # Initialize processor and vision service
+        processor = VisionPDFProcessor()
+        provider = create_provider_from_env()
+        vision_service = VisionAnalysisService(provider)
+
+        # Process PDF
+        st.info("📄 Converting PDF pages to images...")
+        document = await processor.process(tmp_path)
+        
+        # Analyze document
+        st.info("🔍 Analyzing document with AI vision...")
+        progress_bar = st.progress(0)
+        
+        # Analyze each page
+        for i, page in enumerate(document.pages):
+            context = f"This is page {page.page_number} of {document.page_count} from '{document.name}'"
+            page.summary = await vision_service.analyze_page(page, context)
+            progress_bar.progress((i + 1) / len(document.pages))
+        
+        # Save document
+        document.summary = f"Document with {len(document.pages)} pages analyzed"
+        vision_service._save_document_metadata(document)
+        
+        # Clean up temp file
+        os.unlink(tmp_path)
+        
+        return document
+
     except Exception as e:
-        st.sidebar.error(f"Failed to read call_log.json: {e}")
-        disk_call_log = []
-
-# ensure session_state.call_log exists and merge (disk entries are authoritative)
-st.session_state.setdefault("call_log", [])
-
-# merge: keep disk_call_log as the source of truth;
-# but if session_state has extra entries not yet on disk, append them and persist.
-# (this handles rare race cases)
-# Build a simple set of timestamps to detect duplicates
-disk_ts = set(e.get("timestamp") for e in disk_call_log)
-merged = list(disk_call_log)  # start from disk
-
-# append any in-memory entries that aren't in disk
-for e in list(st.session_state.get("call_log", [])):
-    if e.get("timestamp") not in disk_ts:
-        merged.append(e)
-        disk_ts.add(e.get("timestamp"))
-
-# save merged back into session_state
-st.session_state["call_log"] = merged
-
-# display most recent entries (reverse order)
-if st.session_state.call_log:
-    for entry in reversed(st.session_state.call_log[-50:]):
-        ts = entry.get("timestamp", "")
-        fn = entry.get("function", "") or "N/A"
-        args = entry.get("args", {})
-        result = entry.get("result", "")
-        st.sidebar.markdown(f"**{fn}** — `{ts}`")
-        st.sidebar.caption(f"Args: {args}\nResult: {result}")
-        st.sidebar.markdown("---")
-else:
-    st.sidebar.info("No function calls recorded yet.")
-
-if st.sidebar.button("🧹 Clear Timeline"):
-    # clear both in-memory and disk
-    st.session_state.call_log = []
-    try:
-        if os.path.exists(log_path):
-            os.remove(log_path)
-    except Exception as e:
-        st.sidebar.error(f"Could not remove log file: {e}")
-    st.rerun()
+        st.error(f"❌ Error processing file: {e}")
+        return None
 
 
-# -------------------------------------------------
-# Header
-# -------------------------------------------------
-st.title("💬 AI PDF QA — Strict HR / IT / Other Assistant")
-st.caption("Answers strictly from ingested PDF context with numbered [1][2][3] listings.")
+def display_document_info(doc_info):
+    """Display document information"""
+    st.markdown(f"**📄 {doc_info['name']}**")
+    st.markdown(f"- Pages: {doc_info['page_count']}")
+    st.markdown(f"- Status: {doc_info['status']}")
+    st.markdown(f"- Has Summaries: {'✅' if doc_info['has_summaries'] else '❌'}")
 
-# -------------------------------------------------
-# Render Chat Messages (modern UX)
-# -------------------------------------------------
-assistant_idx = -1  # track assistant messages separately
 
-for i, turn in enumerate(st.session_state.history):
-    # ---------- USER MESSAGE ----------
-    if turn["role"] == "user":
-        st.markdown(
-            f"""
-            <div style='display:flex; justify-content:flex-end; margin:6px 0;'>
-                <div style='background:linear-gradient(135deg, #00b37e, #009970);
-                color:white; padding:10px 14px; border-radius:16px 16px 4px 16px;
-                max-width:75%; font-size:15px; box-shadow:0 2px 4px rgba(0,0,0,0.2);'>
-                    <b>({turn.get('folder','')})</b> {turn['text']}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+def main():
+    """Main Streamlit app"""
+    
+    # Header
+    st.title("📄 Vision RAG - Document Q&A System")
+    st.markdown("Upload PDFs and ask questions using AI vision analysis")
+    
+    # Initialize services
+    if not initialize_services():
+        st.stop()
+    
+    # Sidebar
+    with st.sidebar:
+        st.header("📚 Documents")
+        
+        # Upload section
+        st.subheader("Upload New PDF")
+        uploaded_file = st.file_uploader(
+            "Choose a PDF file",
+            type=['pdf'],
+            help="Upload a PDF to analyze and ask questions about"
         )
-
-    # ---------- ASSISTANT MESSAGE ----------
-    elif turn["role"] == "assistant":
-        assistant_idx += 1
-        answer = turn["text"]
-
-        if answer.strip().lower() == "i don't know":
-            st.markdown(
-                f"""
-                <div style='display:flex; justify-content:flex-start; margin:6px 0;'>
-                    <div style='background:#f1f3f4; color:#222; padding:10px 14px;
-                    border-radius:16px 16px 16px 4px; max-width:80%;
-                    font-size:15px; box-shadow:0 2px 4px rgba(0,0,0,0.1);'>
-                        🤔 I don't know
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+        
+        if uploaded_file and st.button("🚀 Process Document", type="primary"):
+            st.session_state.processing = True
+            with st.spinner("Processing document..."):
+                document = asyncio.run(process_uploaded_file(uploaded_file))
+                if document:
+                    st.success(f"✅ Document processed: {document.name}")
+                    st.session_state.current_document = document.id
+                    st.session_state.chat_history = []
+                    st.rerun()
+            st.session_state.processing = False
+        
+        # List existing documents
+        st.subheader("Existing Documents")
+        documents = st.session_state.chat_service.list_documents()
+        
+        if documents:
+            for doc in documents:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    if st.button(
+                        f"📄 {doc['name'][:30]}...",
+                        key=f"doc_{doc['id']}",
+                        help=f"{doc['page_count']} pages"
+                    ):
+                        st.session_state.current_document = doc['id']
+                        st.session_state.chat_history = []
+                        st.rerun()
+                with col2:
+                    if doc['has_summaries']:
+                        st.markdown("✅")
+                    else:
+                        st.markdown("⚠️")
         else:
-            # format context output
-            safe_html = (
-                answer.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace("\n", "<br>")
-                .replace("Sources:", "<hr><b>Sources:</b><br>")
-            )
-            for n, color in zip(range(1, 6),
-                ["#2E8B57", "#1E90FF", "#FF8C00", "#DA70D6", "#A52A2A"]
-            ):
-                safe_html = safe_html.replace(f"[{n}]", f"<b style='color:{color};'>[{n}]</b>")
-
-            st.markdown(
-                f"""
-                <div style='display:flex; justify-content:flex-start; margin:6px 0;'>
-                    <div style='background-color:#fefefe; color:#111;
-                    padding:12px 16px; border-radius:16px 16px 16px 4px;
-                    max-width:85%; font-family:Segoe UI, sans-serif;
-                    line-height:1.6; font-size:15px;
-                    box-shadow:0 2px 4px rgba(0,0,0,0.1);'>
-                        {safe_html}
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-            # ---------- SOURCES ----------
-            if assistant_idx < len(st.session_state.sources_history):
-                sources = st.session_state.sources_history[assistant_idx]
-                if sources:
-                    st.markdown(
-                        f"""
-                        <div style='margin:6px 0 16px 20px; font-size:13px;
-                        font-family:monospace; color:#555;'>
-                            📚 <b>Sources:</b><br>
-                            {"".join([
-                                f"<div style='margin-left:12px;'>[{i+1}] <code>{os.path.basename(s.get('doc_path',''))}</code> — <span style=\"color:#777;\">{s.get('doc_path','')}</span></div>"
-                                for i, s in enumerate(sources)
-                            ])}
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-
-# ---------- AUTO-SCROLL TO BOTTOM ----------
-st.markdown("<div id='chat_end'></div>", unsafe_allow_html=True)
-st.markdown(
-    """
-    <script>
-        var chatDiv = document.getElementById('chat_end');
-        if (chatDiv) {
-            chatDiv.scrollIntoView({behavior: 'smooth'});
-        }
-    </script>
-    """,
-    unsafe_allow_html=True,
-)
-
-# -------------------------------------------------
-# Input Section (safe clear)
-# -------------------------------------------------
-st.markdown("---")
-
-query = st.text_input(
-    "Ask a question (auto HR / IT / Other detection):",
-    value=st.session_state.get("user_input", ""),
-    key="chat_input_value",
-)
-
-col1, col2 = st.columns([1, 1])
-
-with col1:
-    if st.button("📤 Send", use_container_width=True):
-        q = (st.session_state.get("chat_input_value") or "").strip()
-        if q:
-            process_user_message(st.session_state, q, top_k=3)
-            st.session_state["user_input"] = ""
-            st.session_state["clear_input_flag"] = True
+            st.info("No documents yet. Upload one above!")
+        
+        # Cost tracking
+        st.divider()
+        total_cost = st.session_state.chat_service.get_total_cost()
+        st.metric("💰 Session Cost", f"${total_cost:.4f}")
+        if st.button("🔄 Reset Cost"):
+            st.session_state.chat_service.reset_cost()
             st.rerun()
-        else:
-            st.warning("Please enter a question.")
+    
+    # Main content area
+    if st.session_state.current_document:
+        # Get document info
+        doc_info = st.session_state.chat_service.get_document_info(
+            st.session_state.current_document
+        )
+        
+        if doc_info:
+            # Agent always decides - no settings, no header
+            max_pages = None
+            use_all_pages = False
+            
+            # Display chat history
+            chat_container = st.container()
+            with chat_container:
+                if st.session_state.chat_history:
+                    for i, chat in enumerate(st.session_state.chat_history, 1):
+                        # User message
+                        with st.chat_message("user"):
+                            st.markdown(chat['question'])
+                        
+                        # Assistant response
+                        result = chat['result']
+                        with st.chat_message("assistant"):
+                            st.markdown(result['answer'])
+                            
+                            # Show metadata in a compact format
+                            page_list = ", ".join(map(str, result['page_numbers']))
+                            st.caption(
+                                f"📄 Pages: {page_list if page_list else 'None'} | "
+                                f"💰 Cost: ${result['total_cost']:.4f} | "
+                                f"📊 {len(result['page_numbers'])} pages analyzed"
+                            )
+        
+            
+            # Chat input at the bottom
+            st.divider()
+            
+            # Input area
+            col1, col2 = st.columns([5, 1])
+            with col1:
+                question = st.text_input(
+                    "Ask a question:",
+                    placeholder="Type your question here...",
+                    key="question_input",
+                    label_visibility="collapsed"
+                )
+            with col2:
+                send_button = st.button("📤 Send", type="primary", use_container_width=True)
+            
+            # Process question
+            if send_button and question:
+                with st.spinner("🤔 Thinking..."):
+                    try:
+                        result = asyncio.run(
+                            st.session_state.chat_service.ask(
+                                document_id=st.session_state.current_document,
+                                question=question,
+                                max_pages=max_pages,
+                                use_all_pages=use_all_pages
+                            )
+                        )
+                        
+                        # Add to chat history
+                        st.session_state.chat_history.append({
+                            'question': question,
+                            'result': result
+                        })
+                        
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {e}")
+            
+            # Action buttons
+            if st.session_state.chat_history:
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    if st.button("🗑️ Clear Chat", use_container_width=True):
+                        st.session_state.chat_history = []
+                        st.rerun()
+                with col2:
+                    if st.button("📊 Stats", use_container_width=True):
+                        total_questions = len(st.session_state.chat_history)
+                        total_cost = sum(chat['result']['total_cost'] for chat in st.session_state.chat_history)
+                        total_pages = sum(len(chat['result']['page_numbers']) for chat in st.session_state.chat_history)
+                        avg_pages = total_pages / total_questions if total_questions > 0 else 0
+                        
+                        st.success(
+                            f"**💬 {total_questions} questions** | "
+                            f"**📄 {total_pages} pages** | "
+                            f"**💰 ${total_cost:.4f}** | "
+                            f"**📊 {avg_pages:.1f} avg**"
+                        )
+    
+    else:
+        # Welcome screen
+        st.info("👈 Select or upload a document from the sidebar to get started!")
+        
+        st.markdown("""
+        ### How to use:
+        
+        1. **Upload a PDF** using the sidebar
+        2. **Wait for processing** - the system will:
+           - Convert pages to images
+           - Analyze each page with AI vision
+           - Generate summaries
+        3. **Ask questions** about the document
+        4. **Get answers** based on relevant pages
+        
+        ### Features:
+        
+        - 🤖 **Smart Agent** - Automatically decides how many pages to analyze
+        - 👁️ **Vision Analysis** - Understands tables, charts, and formatting
+        - 💰 **Cost Tracking** - Monitor API usage in real-time
+        - 💬 **Conversational UI** - Natural chat interface
+        - 📊 **Session Statistics** - Track your analysis metrics
+        """)
 
-# Safe clear for Streamlit ≥ 1.37
-if st.session_state.get("clear_input_flag", False):
-    if "chat_input_value" in st.session_state:
-        del st.session_state["chat_input_value"]
-    st.session_state["clear_input_flag"] = False
 
-with col2:
-    if st.button("🧹 Clear Chat", use_container_width=True):
-        for key in ["history", "contexts_history", "sources_history"]:
-            st.session_state[key] = []
-        st.rerun()
-
-# -------------------------------------------------
-# Indexed Files Viewer
-# -------------------------------------------------
-st.markdown("---")
-st.subheader("📂 Indexed Files")
-
-index = _load_index()
-if index:
-    for entry in sorted(index, key=lambda x: x.get("created_at", ""), reverse=True)[:30]:
-        filename = os.path.basename(entry["path"])
-        label = entry.get("label", "Unknown")
-        num_sections = entry.get("num_sections", 0)
-        st.markdown(f"- **{filename}** ({label}) — {num_sections} sections")
-else:
-    st.info("No indexed files found. Upload PDFs to start ingestion.")
+if __name__ == "__main__":
+    main()
