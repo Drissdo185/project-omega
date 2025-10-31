@@ -21,7 +21,7 @@ class OpenAIProvider(BaseProvider):
         self,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
-        model: str = "gpt-5"
+        model: Optional[str] = None
     ):
         """
         Initialize OpenAI provider
@@ -29,11 +29,11 @@ class OpenAIProvider(BaseProvider):
         Args:
             api_key: API key (defaults to OPENAI_API_KEY env var)
             base_url: Base URL for API endpoint (defaults to OPENAI_BASE_URL env var)
-            model: Model name to use
+            model: Model name to use (defaults to OPENAI_MODEL env var)
         """
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.base_url = base_url or os.getenv("OPENAI_BASE_URL", "https://aiportalapi.stu-platform.live/use")
-        self.model_name = model
+        self.model_name = model or os.getenv("OPENAI_MODEL", "GPT-4o-mini")
 
         if not self.api_key:
             raise ValueError("API key is required. Set OPENAI_API_KEY environment variable.")
@@ -81,6 +81,8 @@ class OpenAIProvider(BaseProvider):
         try:
             # Convert messages to OpenAI format
             formatted_messages = self._format_multimodal_messages(messages)
+            
+            logger.debug(f"Sending request to {self.model_name} with {len(formatted_messages)} messages")
 
             response = self.client.chat.completions.create(
                 model=self.model_name,
@@ -92,8 +94,21 @@ class OpenAIProvider(BaseProvider):
             # Track cost if usage is available
             if hasattr(response, 'usage'):
                 self._calculate_cost(response.usage)
+                logger.debug(f"API usage - Input: {response.usage.prompt_tokens}, Output: {response.usage.completion_tokens}")
 
-            return response.choices[0].message.content.strip()
+            # Validate response content
+            content = response.choices[0].message.content
+            
+            if content is None:
+                logger.error("API returned None content")
+                return ""
+            
+            if not content.strip():
+                logger.warning("API returned empty content after strip")
+                return ""
+            
+            logger.debug(f"Received response: {len(content)} characters")
+            return content.strip()
 
         except Exception as e:
             logger.error(f"OpenAI multimodal processing error: {e}")

@@ -38,7 +38,7 @@ class ChatService:
         
         # Initialize storage root
         if storage_root is None:
-            storage_root = os.environ.get("FLEX_RAG_DATA_LOCATION", "./flex_rag_data_location")
+            storage_root = os.environ.get("FLEX_RAG_DATA_LOCATION", "./app/flex_rag_data_location")
         self.storage_root = Path(storage_root)
         
         # Initialize services
@@ -177,55 +177,100 @@ class ChatService:
 
     def list_documents(self) -> List[Dict]:
         """
-        List all available documents
+        List all available documents (optimized with caching)
         
         Returns:
-            List of document info dicts with id, name, page_count
+            List of document info dicts with id, name, page_count, and image info
         """
+        # Cache document list for 5 seconds to avoid repeated disk I/O
+        cache_key = '_doc_list_cache'
+        cache_time_key = '_doc_list_cache_time'
+        
+        import time
+        current_time = time.time()
+        
+        if hasattr(self, cache_time_key):
+            cache_age = current_time - getattr(self, cache_time_key)
+            if cache_age < 5 and hasattr(self, cache_key):
+                return getattr(self, cache_key)
+        
         documents = self.vision_service.get_all_documents()
         
-        return [
+        result = [
             {
                 "id": doc.id,
                 "name": doc.name,
                 "page_count": doc.page_count,
                 "status": doc.status.value,
-                "has_summaries": any(page.summary for page in doc.pages)
+                "has_summaries": any(page.summary for page in doc.pages),
+                "pages_with_images": sum(1 for p in doc.pages if p.isImage),  # Faster than len([])
+                "combined_images_count": len(getattr(doc, 'combined_images', []))
             }
             for doc in documents
         ]
+        
+        # Cache the result
+        setattr(self, cache_key, result)
+        setattr(self, cache_time_key, current_time)
+        
+        return result
 
     def get_document_info(self, document_id: str) -> Optional[Dict]:
         """
-        Get detailed information about a document
+        Get detailed information about a document (optimized with caching)
         
         Args:
             document_id: Document ID
             
         Returns:
-            Dict with document details including page summaries
+            Dict with document details including page summaries and image info
         """
+        # Cache individual document info for 10 seconds
+        cache_key = f'_doc_info_cache_{document_id}'
+        cache_time_key = f'_doc_info_time_{document_id}'
+        
+        import time
+        current_time = time.time()
+        
+        if hasattr(self, cache_time_key):
+            cache_age = current_time - getattr(self, cache_time_key)
+            if cache_age < 10 and hasattr(self, cache_key):
+                return getattr(self, cache_key)
+        
         document = self.vision_service.load_document(document_id)
         
         if not document:
             return None
         
-        return {
+        # Optimized counting
+        pages_with_images = sum(1 for p in document.pages if p.isImage)
+        
+        result = {
             "id": document.id,
             "name": document.name,
             "page_count": document.page_count,
             "status": document.status.value,
             "summary": document.summary,
+            "pages_with_images": pages_with_images,
+            "combined_images_count": len(document.combined_images),
             "pages": [
                 {
                     "page_number": page.page_number,
                     "summary": page.summary,
                     "width": page.width,
-                    "height": page.height
+                    "height": page.height,
+                    "isImage": page.isImage,
+                    "combined_image_number": page.combined_image_number
                 }
                 for page in document.pages
             ]
         }
+        
+        # Cache the result
+        setattr(self, cache_key, result)
+        setattr(self, cache_time_key, current_time)
+        
+        return result
 
     def get_total_cost(self) -> float:
         """Get total cost of all queries in this session"""

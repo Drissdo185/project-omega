@@ -13,6 +13,7 @@ from app.processor.pdf_vision import VisionPDFProcessor
 from app.ai.vision_analysis import VisionAnalysisService
 from app.chat.chat_service import ChatService
 from app.providers.factory import create_provider_from_env
+from app.utils.document_manager import reanalyze_document
 
 
 # Configure Streamlit page
@@ -31,6 +32,8 @@ if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 if 'processing' not in st.session_state:
     st.session_state.processing = False
+if 'reanalyzing' not in st.session_state:
+    st.session_state.reanalyzing = False
 
 
 def initialize_services():
@@ -64,17 +67,50 @@ async def process_uploaded_file(uploaded_file):
         document = await processor.process(tmp_path)
         
         # Analyze document
-        st.info("🔍 Analyzing document with AI vision...")
+        st.info("🔍 Analyzing document with AI vision (gpt-oss-20b)...")
         progress_bar = st.progress(0)
         
-        # Analyze each page
-        for i, page in enumerate(document.pages):
-            context = f"This is page {page.page_number} of {document.page_count} from '{document.name}'"
-            page.summary = await vision_service.analyze_page(page, context)
-            progress_bar.progress((i + 1) / len(document.pages))
+        # Group pages by combined image for analysis
+        image_to_pages = {}
+        for page in document.pages:
+            image_path = page.image_path
+            if image_path not in image_to_pages:
+                image_to_pages[image_path] = []
+            image_to_pages[image_path].append(page)
         
-        # Save document
-        document.summary = f"Document with {len(document.pages)} pages analyzed"
+        # Analyze each combined image
+        analyzed_images = 0
+        total_images = len(image_to_pages)
+        
+        for image_path, pages_in_image in image_to_pages.items():
+            context = f"Combined image from '{document.name}' containing pages {[p.page_number for p in pages_in_image]}"
+            
+            # Analyze all pages in this combined image
+            page_analyses = await vision_service.analyze_combined_image(
+                image_path,
+                pages_in_image,
+                context
+            )
+            
+            # Update page objects with analysis results
+            for analysis in page_analyses:
+                for page in pages_in_image:
+                    if page.page_number == analysis["page_number"]:
+                        page.summary = analysis["summary"]
+                        page.isImage = analysis["isImage"]
+                        # Update dimensions if provided
+                        if analysis.get("width"):
+                            page.width = analysis["width"]
+                        if analysis.get("height"):
+                            page.height = analysis["height"]
+                        break
+            
+            analyzed_images += 1
+            progress_bar.progress(analyzed_images / total_images)
+        
+        # Save document with updated metadata
+        pages_with_images = len([p for p in document.pages if p.isImage])
+        document.summary = f"Document with {len(document.pages)} pages analyzed using gpt-oss-20b, {pages_with_images} pages contain images"
         vision_service._save_document_metadata(document)
         
         # Clean up temp file
@@ -92,7 +128,13 @@ def display_document_info(doc_info):
     st.markdown(f"**📄 {doc_info['name']}**")
     st.markdown(f"- Pages: {doc_info['page_count']}")
     st.markdown(f"- Status: {doc_info['status']}")
-    st.markdown(f"- Has Summaries: {'✅' if doc_info['has_summaries'] else '❌'}")
+    # Check if document has summaries by examining pages
+    has_summaries = any(page.get('summary') for page in doc_info.get('pages', []))
+    st.markdown(f"- Has Summaries: {'✅' if has_summaries else '❌'}")
+    if 'pages_with_images' in doc_info:
+        st.markdown(f"- Pages with Images: {doc_info['pages_with_images']}")
+    if 'combined_images_count' in doc_info:
+        st.markdown(f"- Combined Images: {doc_info['combined_images_count']}")
 
 
 def main():
@@ -134,24 +176,111 @@ def main():
         documents = st.session_state.chat_service.list_documents()
         
         if documents:
-            for doc in documents:
-                col1, col2 = st.columns([3, 1])
+            # Add document selector
+            doc_names = [f"{doc['name']} ({doc['page_count']} pages)" for doc in documents]
+            doc_ids = [doc['id'] for doc in documents]
+            
+            # Find current selection index
+            current_index = 0
+            if st.session_state.current_document:
+                try:
+                    current_index = doc_ids.index(st.session_state.current_document)
+                except ValueError:
+                    current_index = 0
+            
+            # Document selector
+            selected_index = st.selectbox(
+                "📋 Select document to ask questions:",
+                range(len(doc_names)),
+                format_func=lambda x: doc_names[x],
+                index=current_index,
+                help="Choose which document you want to ask questions about"
+            )
+            
+            # Update current document if selection changed
+            if doc_ids[selected_index] != st.session_state.current_document:
+                st.session_state.current_document = doc_ids[selected_index]
+                st.session_state.chat_history = []
+                st.rerun()
+            
+            # Show reanalysis status if in progress
+            if st.session_state.reanalyzing:
+                st.warning("⏳ Reanalysis in progress... Please wait.")
+            
+            # Show detailed info for selected document
+            selected_doc = documents[selected_index]
+            with st.expander("📊 Document Details", expanded=False):
+                st.markdown(f"**Name:** {selected_doc['name']}")
+                st.markdown(f"**Pages:** {selected_doc['page_count']}")
+                st.markdown(f"**Status:** {selected_doc['status']}")
+                has_summaries = selected_doc.get('has_summaries', False)
+                st.markdown(f"**Has Analysis:** {'✅ Ready' if has_summaries else '❌ Pending'}")
+                if 'created_at' in selected_doc:
+                    st.markdown(f"**Created:** {selected_doc['created_at']}")
+                
+                # Quick action buttons
+                col1, col2 = st.columns(2)
                 with col1:
-                    if st.button(
-                        f"📄 {doc['name'][:30]}...",
-                        key=f"doc_{doc['id']}",
-                        help=f"{doc['page_count']} pages"
-                    ):
+                    reanalyze_disabled = st.session_state.processing or st.session_state.reanalyzing
+                    if st.button("🔄 Reanalyze", 
+                                key=f"reanalyze_{selected_doc['id']}", 
+                                help="Re-process this document with updated analysis",
+                                disabled=reanalyze_disabled,
+                                use_container_width=True):
+                        st.session_state.reanalyzing = True
+                        success = asyncio.run(reanalyze_document(selected_doc['id']))
+                        st.session_state.reanalyzing = False
+                        
+                        # Clear chat history if reanalysis was successful
+                        if success and st.session_state.current_document == selected_doc['id']:
+                            st.session_state.chat_history = []
+                        
+                        st.rerun()
+                with col2:
+                    if st.button("🗑️ Delete", 
+                                key=f"delete_{selected_doc['id']}", 
+                                help="Remove this document from the system",
+                                use_container_width=True):
+                        st.info("🗑️ Delete feature - implement if needed")
+            
+            # Alternative: Grid view for documents (comment out if not needed)
+            st.markdown("---")
+            st.markdown("**📂 Quick Access:**")
+            cols = st.columns(min(3, len(documents)))
+            for i, doc in enumerate(documents):
+                with cols[i % 3]:
+                    # Determine status emoji
+                    status_emoji = "✅" if doc['has_summaries'] else "⚠️"
+                    
+                    # Current document indicator
+                    border_style = "border: 2px solid #00ff00; border-radius: 5px; padding: 8px;" if doc['id'] == st.session_state.current_document else "border: 1px solid #ccc; border-radius: 5px; padding: 8px;"
+                    
+                    # Create document card
+                    st.markdown(f"""
+                    <div style="{border_style}">
+                        <div style="font-size: 14px; font-weight: bold;">{doc['name'][:20]}{'...' if len(doc['name']) > 20 else ''}</div>
+                        <div style="font-size: 12px; color: #666;">{doc['page_count']} pages</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    if st.button(f"Select", key=f"quick_select_{doc['id']}", use_container_width=True):
                         st.session_state.current_document = doc['id']
                         st.session_state.chat_history = []
                         st.rerun()
-                with col2:
-                    if doc['has_summaries']:
-                        st.markdown("✅")
-                    else:
-                        st.markdown("⚠️")
         else:
             st.info("No documents yet. Upload one above!")
+        
+        # Current document status
+        if st.session_state.current_document:
+            st.divider()
+            st.markdown("**🎯 Currently Active:**")
+            current_doc = next((doc for doc in documents if doc['id'] == st.session_state.current_document), None)
+            if current_doc:
+                st.success(f"📄 {current_doc['name'][:25]}{'...' if len(current_doc['name']) > 25 else ''}")
+                st.caption(f"Ready for questions • {current_doc['page_count']} pages")
+            else:
+                st.warning("⚠️ Selected document not found")
+                st.session_state.current_document = None
         
         # Cost tracking
         st.divider()
@@ -169,31 +298,72 @@ def main():
         )
         
         if doc_info:
+            # Document header with current selection
+            st.header(f"💬 Chat with: {doc_info['name']}")
+            
+            # Document stats in columns
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("📄 Pages", doc_info['page_count'])
+            with col2:
+                # Check if document has summaries by examining pages
+                has_summaries = any(page.get('summary') for page in doc_info.get('pages', []))
+                st.metric("🔍 Status", "✅ Ready" if has_summaries else "⚠️ Processing")
+            with col3:
+                pages_with_images = doc_info.get('pages_with_images', 0)
+                st.metric("🖼️ Images", pages_with_images)
+            with col4:
+                if st.session_state.chat_history:
+                    total_q = len(st.session_state.chat_history)
+                    st.metric("💬 Questions", total_q)
+                else:
+                    st.metric("💬 Questions", 0)
+            
+            st.divider()
+            
             # Agent always decides - no settings, no header
             max_pages = None
             use_all_pages = False
             
             # Display chat history
-            chat_container = st.container()
-            with chat_container:
-                if st.session_state.chat_history:
-                    for i, chat in enumerate(st.session_state.chat_history, 1):
-                        # User message
-                        with st.chat_message("user"):
-                            st.markdown(chat['question'])
+            if st.session_state.chat_history:
+                st.markdown("### 💬 Conversation")
+                for i, chat in enumerate(st.session_state.chat_history, 1):
+                    # User message
+                    with st.chat_message("user"):
+                        st.write(chat['question'])
+                    
+                    # Assistant response
+                    result = chat['result']
+                    with st.chat_message("assistant"):
+                        # Display answer with validation
+                        answer = result.get('answer', '')
                         
-                        # Assistant response
-                        result = chat['result']
-                        with st.chat_message("assistant"):
-                            st.markdown(result['answer'])
+                        if not answer or not answer.strip():
+                            st.error("⚠️ The AI returned an empty response. This could mean:")
+                            st.markdown("""
+                            - The API endpoint may not support vision/multimodal requests
+                            - The selected pages may not contain relevant information
+                            - There might be an API configuration issue
                             
-                            # Show metadata in a compact format
-                            page_list = ", ".join(map(str, result['page_numbers']))
-                            st.caption(
-                                f"📄 Pages: {page_list if page_list else 'None'} | "
-                                f"💰 Cost: ${result['total_cost']:.4f} | "
-                                f"📊 {len(result['page_numbers'])} pages analyzed"
-                            )
+                            **Try:**
+                            - Rephrasing your question
+                            - Checking if the document was analyzed properly
+                            - Verifying your API endpoint supports multimodal requests
+                            """)
+                        else:
+                            st.write(answer)
+                        
+                        # Show metadata in a compact format
+                        page_numbers = result.get('page_numbers', [])
+                        page_list = ", ".join(map(str, page_numbers))
+                        total_cost = result.get('total_cost', 0)
+                        
+                        st.caption(
+                            f"📄 Pages: {page_list if page_list else 'None'} | "
+                            f"💰 Cost: ${total_cost:.4f} | "
+                            f"📊 {len(page_numbers)} pages analyzed"
+                        )
         
             
             # Chat input at the bottom
@@ -260,25 +430,67 @@ def main():
         # Welcome screen
         st.info("👈 Select or upload a document from the sidebar to get started!")
         
+        # Show existing documents if any
+        documents = st.session_state.chat_service.list_documents()
+        if documents:
+            st.markdown("### 📚 Available Documents:")
+            
+            # Show documents in a grid
+            cols = st.columns(min(3, len(documents)))
+            for i, doc in enumerate(documents):
+                with cols[i % 3]:
+                    status_emoji = "✅" if doc['has_summaries'] else "⚠️"
+                    
+                    with st.container():
+                        st.markdown(f"""
+                        <div style="border: 1px solid #ddd; border-radius: 10px; padding: 15px; margin: 5px; text-align: center;">
+                            <div style="font-size: 18px;">{status_emoji}</div>
+                            <div style="font-weight: bold; margin: 5px 0;">{doc['name'][:25]}{'...' if len(doc['name']) > 25 else ''}</div>
+                            <div style="color: #666; font-size: 12px;">{doc['page_count']} pages</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        if st.button(f"📖 Open {doc['name'][:15]}{'...' if len(doc['name']) > 15 else ''}", 
+                                   key=f"welcome_select_{doc['id']}", 
+                                   use_container_width=True):
+                            st.session_state.current_document = doc['id']
+                            st.session_state.chat_history = []
+                            st.rerun()
+            
+            st.markdown("---")
+        
         st.markdown("""
         ### How to use:
         
-        1. **Upload a PDF** using the sidebar
-        2. **Wait for processing** - the system will:
-           - Convert pages to images
-           - Analyze each page with AI vision
-           - Generate summaries
-        3. **Ask questions** about the document
-        4. **Get answers** based on relevant pages
+        1. **📤 Upload a PDF** using the sidebar upload section
+        2. **⏳ Wait for processing** - the system will:
+           - Convert pages to images (20 pages per combined image)
+           - Analyze each page with AI vision (GPT-4o-mini)
+           - Generate detailed summaries
+        3. **📋 Select a document** from the dropdown or quick access buttons
+        4. **❓ Ask questions** about the selected document content
+        5. **💬 Get answers** based on relevant pages
         
-        ### Features:
+        ### ✨ Features:
         
-        - 🤖 **Smart Agent** - Automatically decides how many pages to analyze
-        - 👁️ **Vision Analysis** - Understands tables, charts, and formatting
+        - 🤖 **Smart Document Selection** - Choose which document to query
+        - 👁️ **Vision Analysis** - Understands tables, charts, and text formatting
+        - 🎯 **Intelligent Page Selection** - AI automatically finds relevant pages
         - 💰 **Cost Tracking** - Monitor API usage in real-time
-        - 💬 **Conversational UI** - Natural chat interface
-        - 📊 **Session Statistics** - Track your analysis metrics
+        - 💬 **Conversational Interface** - Natural chat experience
+        - 📊 **Session Statistics** - Track analysis metrics per document
+        - 🔄 **Document Management** - Easy switching between multiple documents
         """)
+        
+        # Quick tips
+        with st.expander("💡 Pro Tips", expanded=False):
+            st.markdown("""
+            - **Multiple Documents**: Upload multiple PDFs and switch between them easily
+            - **Document Status**: ✅ = Ready for questions, ⚠️ = Still processing  
+            - **Question Types**: Ask about specific topics, request summaries, or find detailed information
+            - **Page References**: The AI will show which pages were used to answer your question
+            - **Cost Management**: Monitor your API usage with the cost tracker in the sidebar
+            """)
 
 
 if __name__ == "__main__":

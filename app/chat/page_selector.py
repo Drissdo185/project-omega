@@ -32,6 +32,7 @@ class PageSelector:
         """
         Select most relevant pages for a user question based on page summaries.
         The agent decides how many pages are needed based on question complexity.
+        Optimized with caching for repeated similar questions.
         
         Args:
             document: Document with page summaries
@@ -44,7 +45,13 @@ class PageSelector:
         try:
             logger.info(f"Selecting relevant pages for question: {user_question}")
 
-            # Build context with all page summaries
+            # Quick cache check for exact same question (within session)
+            cache_key = f"{document.id}_{user_question}_{max_pages}"
+            if hasattr(self, '_selection_cache') and cache_key in self._selection_cache:
+                logger.info("Using cached page selection")
+                return self._selection_cache[cache_key]
+
+            # Build context with all page summaries (optimized)
             pages_context = self._build_pages_context(document)
 
             # Build prompt for page selection (agent decides count)
@@ -54,7 +61,7 @@ class PageSelector:
             messages = [
                 {
                     "role": "system",
-                    "content": "You are an expert document analyst. Your task is to identify which pages of a document are most relevant to answer a user's question. Select as many or as few pages as needed - quality over quantity."
+                    "content": "You are an expert document analyst. Identify which pages are most relevant to answer the question. Select as few pages as needed for accuracy."
                 },
                 {
                     "role": "user",
@@ -64,7 +71,7 @@ class PageSelector:
 
             response = await self.provider.process_text_messages(
                 messages=messages,
-                max_tokens=500
+                max_tokens=300  # Reduced from 500 since we only need page numbers
             )
 
             # Parse selected page numbers
@@ -75,13 +82,23 @@ class PageSelector:
                 logger.info(f"Agent selected {len(selected_page_numbers)} pages, limiting to {max_pages}")
                 selected_page_numbers = selected_page_numbers[:max_pages]
 
-            # Get actual Page objects
+            # Get actual Page objects (optimized lookup)
             selected_pages = self._get_pages_by_numbers(document, selected_page_numbers)
 
             # Track cost
             cost = self.provider.get_last_cost() or 0.0
             logger.info(f"Agent selected {len(selected_pages)} pages (cost: ${cost:.4f})")
-            logger.debug(f"Selected page numbers: {selected_page_numbers}")
+
+            # Cache the selection (limit cache size)
+            if not hasattr(self, '_selection_cache'):
+                self._selection_cache = {}
+            
+            # Keep cache small (max 20 entries)
+            if len(self._selection_cache) > 20:
+                # Remove oldest entry
+                self._selection_cache.pop(next(iter(self._selection_cache)))
+            
+            self._selection_cache[cache_key] = selected_pages
 
             return selected_pages
 
@@ -168,15 +185,15 @@ Your response (JSON array only):"""
         document: Document,
         page_numbers: List[int]
     ) -> List[Page]:
-        """Get Page objects by their page numbers"""
-        selected_pages = []
+        """Get Page objects by their page numbers (optimized with dict lookup)"""
+        # Create a lookup dict for O(1) access instead of O(n) for each page
+        page_dict = {page.page_number: page for page in document.pages}
         
+        # Get pages in the order requested, skip missing ones
+        selected_pages = []
         for page_num in page_numbers:
-            # Find page with matching page_number
-            for page in document.pages:
-                if page.page_number == page_num:
-                    selected_pages.append(page)
-                    break
+            if page_num in page_dict:
+                selected_pages.append(page_dict[page_num])
         
         return selected_pages
 

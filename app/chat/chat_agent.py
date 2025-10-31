@@ -168,6 +168,11 @@ class ChatAgent:
                 max_tokens=2000
             )
 
+            # Validate response
+            if not response or not response.strip():
+                logger.warning("LLM returned empty response")
+                return "I apologize, but I couldn't generate an answer. The AI model returned an empty response. Please try rephrasing your question or check if the document pages contain relevant information."
+            
             return response.strip()
 
         except Exception as e:
