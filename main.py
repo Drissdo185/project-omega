@@ -124,12 +124,18 @@ async def process_uploaded_file(uploaded_file):
 
 
 def display_document_info(doc_info):
-    """Display document information"""
+    """Display document information (optimized)"""
     st.markdown(f"**📄 {doc_info['name']}**")
     st.markdown(f"- Pages: {doc_info['page_count']}")
     st.markdown(f"- Status: {doc_info['status']}")
-    # Check if document has summaries by examining pages
-    has_summaries = any(page.get('summary') for page in doc_info.get('pages', []))
+    
+    # Use pre-computed has_summaries if available
+    if 'has_summaries' in doc_info:
+        has_summaries = doc_info['has_summaries']
+    else:
+        # Fallback to checking pages
+        has_summaries = any(page.get('summary') for page in doc_info.get('pages', []))
+    
     st.markdown(f"- Has Summaries: {'✅' if has_summaries else '❌'}")
     if 'pages_with_images' in doc_info:
         st.markdown(f"- Pages with Images: {doc_info['pages_with_images']}")
@@ -171,9 +177,15 @@ def main():
                     st.rerun()
             st.session_state.processing = False
         
-        # List existing documents
+        # List existing documents (cached)
         st.subheader("Existing Documents")
-        documents = st.session_state.chat_service.list_documents()
+        
+        # Cache document list in session state for better performance
+        if 'documents_list' not in st.session_state or st.session_state.processing or st.session_state.reanalyzing:
+            documents = st.session_state.chat_service.list_documents()
+            st.session_state.documents_list = documents
+        else:
+            documents = st.session_state.documents_list
         
         if documents:
             # Add document selector
@@ -292,10 +304,16 @@ def main():
     
     # Main content area
     if st.session_state.current_document:
-        # Get document info
-        doc_info = st.session_state.chat_service.get_document_info(
-            st.session_state.current_document
-        )
+        # Get document info (cached in session state)
+        cache_doc_key = f'doc_info_{st.session_state.current_document}'
+        
+        if cache_doc_key not in st.session_state or st.session_state.processing or st.session_state.reanalyzing:
+            doc_info = st.session_state.chat_service.get_document_info(
+                st.session_state.current_document
+            )
+            st.session_state[cache_doc_key] = doc_info
+        else:
+            doc_info = st.session_state[cache_doc_key]
         
         if doc_info:
             # Document header with current selection

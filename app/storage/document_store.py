@@ -25,7 +25,20 @@ class DocumentStore(BaseStorage):
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     def load_document(self, doc_id: str) -> Optional[Document]:
-        """Load a document by its ID"""
+        """Load a document by its ID with caching"""
+        # Simple in-memory cache (10 seconds)
+        cache_key = f'_doc_cache_{doc_id}'
+        cache_time_key = f'_doc_time_{doc_id}'
+        
+        import time
+        current_time = time.time()
+        
+        if hasattr(self, cache_time_key):
+            cache_age = current_time - getattr(self, cache_time_key)
+            if cache_age < 10 and hasattr(self, cache_key):
+                logger.debug(f"Using cached document {doc_id}")
+                return getattr(self, cache_key)
+        
         metadata_path = self.documents_dir / doc_id / "metadata.json"
 
         if not metadata_path.exists():
@@ -35,13 +48,32 @@ class DocumentStore(BaseStorage):
         try:
             with open(metadata_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return Document.from_dict(data)
+            document = Document.from_dict(data)
+            
+            # Cache the result
+            setattr(self, cache_key, document)
+            setattr(self, cache_time_key, current_time)
+            
+            return document
         except Exception as e:
             logger.error(f"Failed to load document {doc_id}: {e}")
             return None
 
     def load_index(self) -> List[Dict]:
-        """Load the global document index"""
+        """Load the global document index with caching"""
+        # Cache index for 5 seconds to reduce I/O
+        cache_key = '_index_cache'
+        cache_time_key = '_index_cache_time'
+        
+        import time
+        current_time = time.time()
+        
+        if hasattr(self, cache_time_key):
+            cache_age = current_time - getattr(self, cache_time_key)
+            if cache_age < 5 and hasattr(self, cache_key):
+                logger.debug("Using cached index")
+                return getattr(self, cache_key)
+        
         index_path = self.documents_dir / "index.json"
 
         if not index_path.exists():
@@ -50,7 +82,13 @@ class DocumentStore(BaseStorage):
 
         try:
             with open(index_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                index = json.load(f)
+            
+            # Cache the result
+            setattr(self, cache_key, index)
+            setattr(self, cache_time_key, current_time)
+            
+            return index
         except Exception as e:
             logger.error(f"Failed to load index: {e}")
             return []
@@ -78,7 +116,7 @@ class DocumentStore(BaseStorage):
         return self.load_document(doc_id)
 
     async def save_document(self, document: Document) -> bool:
-        """Save a document to storage"""
+        """Save a document to storage and invalidate cache"""
         try:
             doc_dir = self.documents_dir / document.id
             doc_dir.mkdir(parents=True, exist_ok=True)
@@ -88,6 +126,10 @@ class DocumentStore(BaseStorage):
                 json.dump(document.to_dict(), f, indent=2, ensure_ascii=False)
 
             self._update_index_entry(document)
+            
+            # Invalidate caches
+            self._invalidate_cache(document.id)
+            
             return True
         except Exception as e:
             logger.error(f"Failed to save document {document.id}: {e}")
@@ -145,6 +187,12 @@ class DocumentStore(BaseStorage):
 
     def _update_index_entry(self, document: Document):
         """Update a single document entry in the index"""
+        # Clear index cache before loading to get fresh data
+        if hasattr(self, '_index_cache'):
+            delattr(self, '_index_cache')
+        if hasattr(self, '_index_cache_time'):
+            delattr(self, '_index_cache_time')
+        
         index = self.load_index()
 
         index_entry = {
@@ -164,6 +212,22 @@ class DocumentStore(BaseStorage):
         index_path = self.documents_dir / "index.json"
         with open(index_path, "w", encoding="utf-8") as f:
             json.dump(index, f, indent=2, ensure_ascii=False)
+        
+        # Invalidate cache after update
+        if hasattr(self, '_index_cache'):
+            delattr(self, '_index_cache')
+        if hasattr(self, '_index_cache_time'):
+            delattr(self, '_index_cache_time')
+    
+    def _invalidate_cache(self, doc_id: str):
+        """Invalidate cache for a specific document"""
+        cache_key = f'_doc_cache_{doc_id}'
+        cache_time_key = f'_doc_time_{doc_id}'
+        
+        if hasattr(self, cache_key):
+            delattr(self, cache_key)
+        if hasattr(self, cache_time_key):
+            delattr(self, cache_time_key)
 
     def get_document_pages_dir(self, doc_id: str) -> Optional[Path]:
         """Get the pages directory path for a document"""

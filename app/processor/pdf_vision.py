@@ -24,9 +24,9 @@ class VisionPDFProcessor(BaseProcessor):
 
     def __init__(
         self,
-        render_scale: float = 2.0,  # Increased for better quality
-        jpeg_quality: int = 95,     # Increased for better quality
-        max_image_size: tuple = (4000, 4000),  # Increased max size for better quality
+        render_scale: float = 1.5,  # Balanced quality/performance (reduced from 2.0)
+        jpeg_quality: int = 85,     # Balanced quality/file size (reduced from 95)
+        max_image_size: tuple = (3500, 3500),  # Reduced from 4000x4000 for better memory usage
         max_pages_per_image: int = 20,
         storage_root: str = None
     ):
@@ -92,19 +92,22 @@ class VisionPDFProcessor(BaseProcessor):
         
         logger.info(f"Creating combined image with {actual_pages} pages in {cols}x{rows} grid")
         
-        # Render individual pages with higher quality
+        # Render individual pages with optimized memory usage
         page_images = []
         page_info = []
         
         for i, page in enumerate(pdf_pages):
             page_num = start_page + i
             
-            # Render page to pixmap with higher quality
+            # Render page to pixmap
             mat = fitz.Matrix(self.render_scale, self.render_scale)
             pix = page.get_pixmap(matrix=mat, alpha=False)
             
             # Convert to PIL Image
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            
+            # Free pixmap memory immediately
+            pix = None
             
             # Store original dimensions before resizing
             original_width, original_height = img.size
@@ -239,15 +242,15 @@ class VisionPDFProcessor(BaseProcessor):
                 # Create combined image for this group
                 combined_img, page_info = self._create_combined_image(page_group, start_page_num)
                 
-                # Save combined image with high quality
+                # Save combined image with optimized settings
                 image_num = (start_idx // pages_per_group) + 1
                 output_path = pages_dir / f"combined_{image_num}.jpg"
                 
-                # Apply intelligent resizing to maintain quality
+                # Apply intelligent resizing to maintain quality while reducing file size
                 original_size = combined_img.size
                 if (combined_img.width > self.max_image_size[0] or 
                     combined_img.height > self.max_image_size[1]):
-                    # Calculate resize ratio to maintain quality
+                    # Calculate resize ratio
                     ratio = min(
                         self.max_image_size[0] / combined_img.width,
                         self.max_image_size[1] / combined_img.height
@@ -257,14 +260,19 @@ class VisionPDFProcessor(BaseProcessor):
                     combined_img = combined_img.resize((new_width, new_height), Image.Resampling.LANCZOS)
                     logger.debug(f"Resized combined image {image_num} from {original_size} to {combined_img.size}")
                 
-                # Save with high quality settings
+                # Save with optimized settings (balanced quality/size)
                 combined_img.save(
                     output_path,
                     "JPEG",
                     quality=self.jpeg_quality,
                     optimize=True,
-                    progressive=True  # Progressive JPEG for better quality
+                    progressive=True
                 )
+                
+                # Free image memory
+                img_size_mb = os.path.getsize(output_path) / (1024 * 1024)
+                logger.debug(f"Saved image {image_num}: {img_size_mb:.2f} MB")
+                combined_img = None
                 
                 # Store image info
                 combined_images.append({

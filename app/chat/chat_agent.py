@@ -162,10 +162,11 @@ class ChatAgent:
                 }
             ]
 
-            # Get answer from vision model
+            # Get answer from vision model (GPT-5 requires temperature=1)
             response = await self.provider.process_multimodal_messages(
                 messages=messages,
-                max_tokens=2000
+                max_tokens=2000,
+                temperature=1.0  # GPT-5 only supports temperature=1
             )
 
             # Validate response
@@ -195,14 +196,15 @@ Analyzing pages: {pages_str}
 User Question:
 {question}
 
-Instructions:
-1. Carefully examine the provided page images
-2. Extract relevant information to answer the question
-3. Provide a clear, accurate answer based on what you see
-4. If the answer isn't in the images, say so clearly
-5. Reference specific page numbers when citing information
+CRITICAL INSTRUCTIONS:
+1. You must answer ONLY using the CONTEXT from the document pages provided
+2. Carefully examine the page images and extract ONLY the information visible in them
+3. If the answer is NOT found in the provided pages, you MUST respond: "The answer is not found in the provided documents."
+4. DO NOT use external knowledge, assumptions, or information beyond what you can see in the images
+5. DO NOT make up or infer information that is not explicitly visible
+6. Reference specific page numbers when citing information from the documents
 
-Your answer:"""
+Your answer (based ONLY on the provided document context):"""
 
     def get_total_cost(self) -> float:
         """Get total cost of all queries in this session"""

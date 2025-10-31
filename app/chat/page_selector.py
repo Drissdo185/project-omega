@@ -61,7 +61,7 @@ class PageSelector:
             messages = [
                 {
                     "role": "system",
-                    "content": "You are an expert document analyst. Identify which pages are most relevant to answer the question. Select as few pages as needed for accuracy."
+                    "content": "You are an expert document analyst. Based ONLY on the page summaries provided, identify which pages are most relevant to answer the question. Select as few pages as needed for accuracy. Do not use external knowledge - only consider the summaries given."
                 },
                 {
                     "role": "user",
@@ -71,7 +71,8 @@ class PageSelector:
 
             response = await self.provider.process_text_messages(
                 messages=messages,
-                max_tokens=300  # Reduced from 500 since we only need page numbers
+                max_tokens=300,  # Reduced from 500 since we only need page numbers
+                temperature=1.0  # GPT-5 only supports temperature=1
             )
 
             # Parse selected page numbers

@@ -72,10 +72,11 @@ class VisionAnalysisService:
                 },
             ]
 
-            # Get analysis from LLM
+            # Get analysis from LLM with optimized token limit (GPT-5 requires temperature=1)
             response = await self.provider.process_multimodal_messages(
                 messages=messages,
-                max_tokens=6000,  # Increased for detailed OCR extraction
+                max_tokens=4000,  # Reduced from 6000 for cost efficiency
+                temperature=1.0  # GPT-5 only supports temperature=1
             )
 
             # Parse the response to get individual page analyses
@@ -106,6 +107,7 @@ class VisionAnalysisService:
         Deterministic method to extract text from specific PDF pages
         This bypasses vision analysis completely for 100% accuracy
         """
+        pdf = None
         try:
             logger.info("Using deterministic PDF text extraction")
             
@@ -146,7 +148,7 @@ class VisionAnalysisService:
                             if len(summary) > 1500:
                                 summary = summary[:1500] + "..."
                             
-                            logger.info(f"Extracted {len(text_content)} characters from page {page_num}")
+                            logger.debug(f"Extracted {len(text_content)} characters from page {page_num}")
                         else:
                             summary = "Page appears to be empty or contains only images"
                             logger.warning(f"Page {page_num} has no extractable text")
@@ -178,13 +180,17 @@ class VisionAnalysisService:
                         "isImage": False
                     })
             
-            pdf.close()
             logger.info(f"Deterministic extraction completed for {len(page_analyses)} pages")
             return page_analyses
             
         except Exception as e:
             logger.error(f"Deterministic extraction failed: {e}")
             return self._create_empty_analyses(pages_in_image)
+        finally:
+            # Always close PDF to free resources
+            if pdf:
+                pdf.close()
+                pdf = None
 
     def _create_empty_analyses(self, pages_in_image: List[Page]) -> List[Dict[str, Any]]:
         """Create empty analyses when all extraction methods fail"""
@@ -649,11 +655,11 @@ Return as valid JSON array:
         Returns:
             List of page analysis dicts with extracted text
         """
+        pdf = None
         try:
             logger.info("Using fallback text extraction with PyMuPDF")
             
             # Try to find the original PDF file
-            # Look in uploads directory for PDF files
             uploads_dir = Path("uploads")
             pdf_files = list(uploads_dir.glob("*.pdf")) if uploads_dir.exists() else []
             
@@ -719,7 +725,6 @@ Return as valid JSON array:
                         "isImage": False
                     })
             
-            pdf.close()
             logger.info(f"Text extraction completed for {len(page_analyses)} pages")
             return page_analyses
             
@@ -735,3 +740,8 @@ Return as valid JSON array:
                 }
                 for page in pages_in_image
             ]
+        finally:
+            # Always close PDF to free resources
+            if pdf:
+                pdf.close()
+                pdf = None
