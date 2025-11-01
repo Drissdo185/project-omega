@@ -165,7 +165,7 @@ class ChatAgent:
             # Get answer from vision model
             response = await self.provider.process_multimodal_messages(
                 messages=messages,
-                max_tokens=2000
+                max_tokens=3000
             )
 
             return response.strip()

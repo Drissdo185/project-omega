@@ -14,7 +14,7 @@ class BaseProvider(ABC):
     async def process_text_messages(
         self,
         messages: List[Dict[str, str]],
-        max_tokens: int = 2000,
+        max_tokens: int = 3000,
         
         **kwargs
     ) -> str:
@@ -35,7 +35,7 @@ class BaseProvider(ABC):
     async def process_multimodal_messages(
         self,
         messages: List[Dict[str, Any]],
-        max_tokens: int = 2000,
+        max_tokens: int = 3000,
         **kwargs
     ) -> str:
         """
