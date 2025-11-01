@@ -52,10 +52,16 @@ def initialize_services():
 async def process_uploaded_file(uploaded_file):
     """Process uploaded PDF file"""
     try:
-        # Save uploaded file to temporary location
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-            tmp_file.write(uploaded_file.getbuffer())
-            tmp_path = tmp_file.name
+        # Save uploaded file to uploads directory for processing and fallback
+        uploads_dir = Path("uploads")
+        uploads_dir.mkdir(exist_ok=True)
+        
+        # Use original filename
+        pdf_path = uploads_dir / uploaded_file.name
+        
+        # Write the file
+        with open(pdf_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
 
         # Initialize processor and vision service
         processor = VisionPDFProcessor()
@@ -64,10 +70,13 @@ async def process_uploaded_file(uploaded_file):
 
         # Process PDF
         st.info("📄 Converting PDF pages to images...")
-        document = await processor.process(tmp_path)
+        document = await processor.process(str(pdf_path))
+        
+        # Name is already correct from the file path
+        # document.name = uploaded_file.name  # Not needed anymore
         
         # Analyze document
-        st.info("🔍 Analyzing document with AI vision (gpt-oss-20b)...")
+        st.info("🔍 Analyzing document with AI vision (GPT-5)...")
         progress_bar = st.progress(0)
         
         # Group pages by combined image for analysis
@@ -110,11 +119,10 @@ async def process_uploaded_file(uploaded_file):
         
         # Save document with updated metadata
         pages_with_images = len([p for p in document.pages if p.isImage])
-        document.summary = f"Document with {len(document.pages)} pages analyzed using gpt-oss-20b, {pages_with_images} pages contain images"
+        document.summary = f"Document with {len(document.pages)} pages analyzed using GPT-5, {pages_with_images} pages contain images"
         vision_service._save_document_metadata(document)
         
-        # Clean up temp file
-        os.unlink(tmp_path)
+        # Note: PDF file kept in uploads/ directory for reference and fallback text extraction
         
         return document
 
@@ -483,7 +491,7 @@ def main():
         1. **📤 Upload a PDF** using the sidebar upload section
         2. **⏳ Wait for processing** - the system will:
            - Convert pages to images (20 pages per combined image)
-           - Analyze each page with AI vision (GPT-4o-mini)
+           - Analyze each page with AI vision (GPT-5)
            - Generate detailed summaries
         3. **📋 Select a document** from the dropdown or quick access buttons
         4. **❓ Ask questions** about the selected document content

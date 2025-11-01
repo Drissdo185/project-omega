@@ -119,10 +119,15 @@ class OpenAIProvider(BaseProvider):
     async def process_multimodal_messages(
         self,
         messages: List[Dict[str, Any]],
-        max_tokens: int = 2000,
+        max_tokens: int = 3000,  # Increased default for detailed defect analysis
         **kwargs
     ) -> str:
-        """Process multimodal messages (text + images)"""
+        """
+        Process multimodal messages (text + images)
+        
+        Default max_tokens increased to 3000 for defect detection use cases
+        which require detailed descriptions of visual anomalies.
+        """
         try:
             # Convert messages to OpenAI format
             logger.debug(f"Formatting multimodal messages for {self.model_name}")
@@ -180,10 +185,19 @@ class OpenAIProvider(BaseProvider):
                 raise ValueError("API returned None content - check if model supports vision/multimodal requests")
             
             if not content.strip():
-                logger.warning("⚠️  API returned empty content after strip")
-                logger.warning(f"   Raw content: '{content}'")
-                logger.warning(f"   Response finish reason: {response.choices[0].finish_reason if hasattr(response.choices[0], 'finish_reason') else 'unknown'}")
-                return ""
+                finish_reason = response.choices[0].finish_reason if hasattr(response.choices[0], 'finish_reason') else 'unknown'
+                logger.error("❌ API returned empty content after strip")
+                logger.error(f"   Raw content: '{content}'")
+                logger.error(f"   Response finish reason: {finish_reason}")
+                logger.error(f"   Model: {self.model_name}")
+                
+                # Check finish reason
+                if finish_reason == "length":
+                    raise ValueError("Response was cut off due to max_tokens limit. Please increase max_tokens.")
+                elif finish_reason == "content_filter":
+                    raise ValueError("Response was filtered by content policy.")
+                else:
+                    raise ValueError(f"API returned empty response (finish_reason: {finish_reason})")
             
             logger.info(f"✅ Multimodal processing successful: {len(content)} characters")
             return content.strip()
@@ -313,14 +327,27 @@ class OpenAIProvider(BaseProvider):
     def _calculate_cost(self, usage) -> None:
         """
         Calculate cost based on token usage
-        gpt-5 pricing (approximate):
+        
+        GPT-5 pricing (approximate):
         - Input: $2.50 per 1M tokens
         - Output: $10.00 per 1M tokens
+        
+        Note: Vision API calls (with images) consume more tokens due to image processing.
+        High-detail images use more tokens for better quality analysis.
+        For defect detection, high-detail mode is recommended despite higher cost.
         """
         try:
             input_cost = (usage.prompt_tokens / 1_000_000) * 2.50
             output_cost = (usage.completion_tokens / 1_000_000) * 10.00
             self.last_cost = input_cost + output_cost
+            
+            # Log detailed token breakdown for defect detection optimization
+            logger.debug(f"Token usage breakdown:")
+            logger.debug(f"  - Input tokens: {usage.prompt_tokens}")
+            logger.debug(f"  - Output tokens: {usage.completion_tokens}")
+            logger.debug(f"  - Input cost: ${input_cost:.6f}")
+            logger.debug(f"  - Output cost: ${output_cost:.6f}")
+            logger.debug(f"  - Total cost: ${self.last_cost:.6f}")
         except Exception as e:
             logger.debug(f"Failed to calculate cost: {e}")
             self.last_cost = None

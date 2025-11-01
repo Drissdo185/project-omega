@@ -1,6 +1,7 @@
 """
 Vision-based document analysis service
 Analyzes combined document images (20 pages per image) and generates summaries with isImage detection
+OPTIMIZED: Phase 1 - Vision-Specific Prompting, Simplified Grid, Dynamic Token Budgeting
 """
 import json
 from typing import List, Optional, Dict, Any
@@ -9,6 +10,9 @@ from loguru import logger
 from app.models.document import Document, Page, DocumentStatus
 import fitz  # PyMuPDF for text extraction fallback
 from app.providers.base import BaseProvider
+from app.ai.vision_prompts import VisionPromptLibrary, AnalysisTask
+from app.ai.grid_descriptor import SimplifiedGridDescriptor, GridLayoutCalculator
+from app.ai.token_optimizer import TokenBudgetOptimizer, ContentComplexity, TaskPriority
 
 
 class VisionAnalysisService:
@@ -19,7 +23,7 @@ class VisionAnalysisService:
         Initialize the vision analysis service
         
         Args:
-            provider: LLM provider with vision capabilities (gpt-oss-20b)
+            provider: LLM provider with vision capabilities (GPT-5)
             storage_root: Root directory for storing analysis results
         """
         self.provider = provider
@@ -38,15 +42,20 @@ class VisionAnalysisService:
         self,
         image_path: str,
         pages_in_image: List[Page],
-        context: str = ""
+        context: str = "",
+        task: AnalysisTask = AnalysisTask.GENERAL,
+        question: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Analyze a combined image containing up to 20 pages and return individual page analysis
+        OPTIMIZED: Uses vision-specific prompts, simplified grid, dynamic token budgeting
 
         Args:
             image_path: Path to the combined image file
             pages_in_image: List of Page objects that are in this combined image
             context: Optional context about the document
+            task: Analysis task type (auto-detected if question provided)
+            question: Optional question for Q&A tasks
 
         Returns:
             List of page analysis dicts with page_number, summary, and isImage
@@ -54,14 +63,40 @@ class VisionAnalysisService:
         try:
             logger.info(f"Analyzing combined image: {image_path} with {len(pages_in_image)} pages")
 
-            # Build the prompt for analyzing all pages in the image
-            prompt = self._build_combined_analysis_prompt(pages_in_image, context)
+            # Auto-detect task from question if provided
+            if question:
+                task = VisionPromptLibrary.detect_task_from_question(question)
+                logger.info(f"Auto-detected task: {task.value}")
+
+            # Build OPTIMIZED prompt using vision-specific library
+            num_pages = len(pages_in_image)
+            grid_size = GridLayoutCalculator.calculate_grid_size(num_pages)
+            grid_description = SimplifiedGridDescriptor.describe_layout(num_pages, grid_size)
+            
+            # Get task-specific prompt
+            if question:
+                prompt = VisionPromptLibrary.get_qa_prompt(question, num_pages, grid_description)
+            else:
+                prompt = VisionPromptLibrary.get_combined_image_prompt(
+                    task, num_pages, grid_description, context
+                )
+
+            # Calculate DYNAMIC token budget based on content
+            token_budget = TokenBudgetOptimizer.calculate_vision_budget(
+                num_pages=num_pages,
+                complexity=ContentComplexity.MODERATE,  # Can be auto-detected in future
+                priority=TaskPriority.NORMAL,
+                has_tables=False,  # Can be detected from page metadata
+                has_diagrams=False
+            )
+            
+            logger.info(f"Using dynamic token budget: {token_budget} (was 4000)")
 
             # Prepare multimodal message
             messages = [
                 {
                     "role": "system",
-                    "content": "You are an expert document analyst with OCR capabilities. Your job is to carefully read and extract ALL text content from document images, including questions, answers, technical details, and specific information. Provide detailed, accurate summaries that capture the complete content so users can find specific information they're looking for."
+                    "content": "You are an expert document analyst with advanced OCR and vision capabilities. Extract ALL text content accurately, analyze visual elements, and provide comprehensive, structured responses."
                 },
                 {
                     "role": "user",
@@ -72,10 +107,10 @@ class VisionAnalysisService:
                 },
             ]
 
-            # Get analysis from LLM with optimized token limit (GPT-5 requires temperature=1)
+            # Get analysis from LLM with OPTIMIZED dynamic token limit
             response = await self.provider.process_multimodal_messages(
                 messages=messages,
-                max_tokens=4000,  # Reduced from 6000 for cost efficiency
+                max_tokens=token_budget,  # Dynamic budget optimization
                 temperature=1.0  # GPT-5 only supports temperature=1
             )
 
@@ -298,162 +333,48 @@ class VisionAnalysisService:
             raise
 
     def _build_combined_analysis_prompt(self, pages_in_image: List[Page], context: str = "") -> str:
-        """Build prompt for analyzing combined image with multiple pages"""
-        page_numbers = [str(p.page_number) for p in pages_in_image]
-        page_list = ", ".join(page_numbers)
+        """
+        Build prompt for analyzing combined image with multiple pages
+        LEGACY METHOD - kept for compatibility, now uses optimized prompt library
+        """
+        num_pages = len(pages_in_image)
+        grid_size = GridLayoutCalculator.calculate_grid_size(num_pages)
+        grid_description = SimplifiedGridDescriptor.create_complete_context(
+            num_pages, grid_size, task_type="analysis"
+        )
         
-        # Build grid layout description
-        grid_layout = self._build_grid_layout_description(pages_in_image)
+        # Use vision-optimized prompt from library
+        base_prompt = VisionPromptLibrary.get_combined_image_prompt(
+            AnalysisTask.GENERAL,
+            num_pages,
+            grid_description,
+            context
+        )
         
-        return f"""Please analyze this combined image containing PDF pages and perform careful text extraction.
-
-This image contains multiple PDF pages arranged in a grid layout:
-
-{grid_layout}
-
-CRITICAL GRID LAYOUT INSTRUCTIONS:
-- The image has pages arranged in a specific grid pattern as described above
-- You MUST identify each page by its position in the grid, not by any text labels
-- Start from TOP-LEFT as position (1,1), then move RIGHT across the row, then DOWN to next row
-- Each page corresponds to a specific page number based on its grid position
-- Read the content from the correct grid position for each page number
-
-INSTRUCTIONS FOR ACCURATE TEXT EXTRACTION:
-- Perform OCR (Optical Character Recognition) to read all visible text
-- Extract exact text content including names, companies, technologies, dates
-- Include specific technical terms, programming languages, and frameworks
-- Transcribe questions and answers word-for-word
-- Note specific years of experience and quantifiable details
-- Include company names, project details, and accomplishments as written
-
-For each page, provide a JSON object with:
-1. **page_number**: The page number (integer) - based on grid position mapping above
-2. **width**: 960 (standard width)
-3. **height**: 1440 (standard height)
-4. **summary**: Complete transcription of ALL visible text content from the CORRECT grid position including:
-   - Every question and answer
-   - Names, titles, and contact information
-   - Technical skills and programming languages mentioned
-   - Years of experience and employment history
-   - Educational background and certifications
-   - Project descriptions and achievements
-   - Any other specific details mentioned
-5. **isImage**: Boolean - true if page contains charts/diagrams, false for text-only
-
-Please focus on accuracy and completeness. Include all text exactly as it appears from the CORRECT grid position for each page number.
+        # Add JSON format requirement
+        json_format = """
 
 Return as valid JSON array:
 [
-  {{
+  {
     "page_number": 1,
     "width": 960,
     "height": 1440,
-    "summary": "Complete transcription of all visible text content from TOP-LEFT position...",
+    "summary": "Complete content from page...",
     "isImage": false
-  }}
-]
-
-{context}"""
-
-    def _build_grid_layout_description(self, pages_in_image: List[Page]) -> str:
-        """Build a detailed grid layout description for the AI to understand page positions"""
-        if not pages_in_image:
-            return "No pages in image"
+  }
+]"""
         
-        # Sort pages by page number to get the correct order
-        sorted_pages = sorted(pages_in_image, key=lambda p: p.page_number)
-        
-        # Determine grid layout based on page count (must match pdf_vision.py logic)
-        page_count = len(sorted_pages)
-        
-        if page_count <= 1:
-            grid_cols, grid_rows = 1, 1
-        elif page_count <= 2:
-            grid_cols, grid_rows = 2, 1
-        elif page_count <= 4:
-            grid_cols, grid_rows = 2, 2
-        elif page_count <= 6:
-            grid_cols, grid_rows = 3, 2  # 6 pages: 3 columns, 2 rows
-        elif page_count <= 9:
-            grid_cols, grid_rows = 3, 3  # 7-9 pages: 3 columns, 3 rows
-        elif page_count <= 12:
-            grid_cols, grid_rows = 4, 3
-        elif page_count <= 16:
-            grid_cols, grid_rows = 4, 4
-        else:
-            grid_cols, grid_rows = 4, 5  # For more than 16 pages
-        
-        # Build detailed grid description
-        description = f"GRID LAYOUT: {grid_cols} columns × {grid_rows} rows\n"
-        description += f"Total pages: {page_count}\n\n"
-        description += "EXACT PAGE POSITIONS IN THE GRID:\n"
-        
-        # Create visual grid representation
-        description += "Visual Grid Layout:\n"
-        grid_visual = [["." for _ in range(grid_cols)] for _ in range(grid_rows)]
-        
-        for i, page in enumerate(sorted_pages):
-            row = i // grid_cols
-            col = i % grid_cols
-            grid_visual[row][col] = f"P{page.page_number}"
-            
-        for row_idx, row in enumerate(grid_visual):
-            description += f"Row {row_idx + 1}: " + " | ".join(f"{cell:>3}" for cell in row) + "\n"
-        
-        description += "\nPAGE MAPPING (READ LEFT-TO-RIGHT, TOP-TO-BOTTOM):\n"
-        for i, page in enumerate(sorted_pages):
-            row = i // grid_cols + 1  # 1-indexed for clarity
-            col = i % grid_cols + 1   # 1-indexed for clarity
-            position_name = self._get_position_name(row, col, grid_rows, grid_cols)
-            description += f"- Page {page.page_number}: Row {row}, Column {col} ({position_name})\n"
-        
-        description += f"\nCRITICAL INSTRUCTIONS FOR AI ANALYSIS:\n"
-        description += f"1. The image has a {grid_cols}×{grid_rows} grid layout\n"
-        description += f"2. Read from LEFT to RIGHT, then TOP to BOTTOM\n"
-        description += f"3. Position 1 = TOP-LEFT, Position {page_count} = BOTTOM-RIGHT\n"
-        description += f"4. Each grid cell contains exactly one page\n"
-        description += f"5. Extract text from the EXACT grid position for each page number\n"
-        description += f"6. If content seems misplaced, double-check the grid mapping above\n"
-        
-        return description
-    
-    def _get_position_name(self, row: int, col: int, total_rows: int, total_cols: int) -> str:
-        """Get human-readable position name for a grid cell"""
-        # Determine vertical position
-        if row == 1:
-            vertical = "TOP"
-        elif row == total_rows:
-            vertical = "BOTTOM"
-        else:
-            vertical = f"ROW-{row}"
-        
-        # Determine horizontal position
-        if col == 1:
-            horizontal = "LEFT"
-        elif col == total_cols:
-            horizontal = "RIGHT"
-        else:
-            horizontal = f"COL-{col}"
-        
-        # Combine for specific positions
-        if total_rows == 2 and total_cols == 3:  # 6-page layout
-            positions = {
-                (1, 1): "TOP-LEFT",
-                (1, 2): "TOP-CENTER", 
-                (1, 3): "TOP-RIGHT",
-                (2, 1): "BOTTOM-LEFT",
-                (2, 2): "BOTTOM-CENTER",
-                (2, 3): "BOTTOM-RIGHT"
-            }
-            return positions.get((row, col), f"{vertical}-{horizontal}")
-        
-        return f"{vertical}-{horizontal}"
+        return base_prompt + json_format
 
     def _parse_combined_response(self, response: str, pages_in_image: List[Page]) -> List[Dict[str, Any]]:
         """Parse the JSON response from combined image analysis"""
         try:
             # Clean the response to extract JSON
             response = response.strip()
+            
+            # Log the raw response for debugging
+            logger.debug(f"Raw API response (first 500 chars): {response[:500]}")
             
             # Check for common vision API errors
             if any(phrase in response.lower() for phrase in [
@@ -466,12 +387,29 @@ Return as valid JSON array:
                 logger.warning(f"AI model reports no vision capability: {response[:200]}...")
                 raise ValueError("AI model does not support image analysis")
             
+            # If response doesn't look like JSON at all, treat it as text content
+            if '[' not in response and '{' not in response:
+                logger.warning("Response doesn't contain JSON markers, treating as plain text")
+                # Use the response as summary for all pages
+                summary_text = response[:1500] if len(response) > 1500 else response
+                return [
+                    {
+                        "page_number": page.page_number,
+                        "width": 960,
+                        "height": 1440,
+                        "summary": summary_text,
+                        "isImage": False
+                    }
+                    for page in pages_in_image
+                ]
+            
             # Try to find JSON array in the response
             start_idx = response.find('[')
             end_idx = response.rfind(']') + 1
             
             if start_idx != -1 and end_idx > start_idx:
                 json_str = response[start_idx:end_idx]
+                logger.debug(f"Attempting to parse JSON: {json_str[:200]}...")
                 page_analyses = json.loads(json_str)
                 
                 # Validate and clean the analyses
@@ -503,32 +441,21 @@ Return as valid JSON array:
                             "isImage": False
                         })
                 
+                logger.info(f"Successfully parsed {len(valid_analyses)} page analyses from JSON")
                 return valid_analyses
             
             else:
+                logger.error("No JSON array markers found in response")
                 raise ValueError("No valid JSON array found in response")
                 
         except Exception as e:
             logger.error(f"Failed to parse combined response: {e}")
-            logger.debug(f"Full response was: {response}")
+            logger.debug(f"Full response was: {response[:1000]}...")
             
-            # Return default analysis for all pages with more specific error message
-            error_message = "Vision analysis failed - model may not support image processing"
-            if "json" in str(e).lower():
-                error_message = "Vision analysis response format error"
-            elif "vision" in str(e).lower() or "image" in str(e).lower():
-                error_message = "Vision capabilities not available"
-            
-            return [
-                {
-                    "page_number": page.page_number,
-                    "width": 960,
-                    "height": 1440,
-                    "summary": error_message,
-                    "isImage": False
-                }
-                for page in pages_in_image
-            ]
+            # Trigger fallback by raising exception instead of returning error message
+            # This will cause the calling function to use deterministic text extraction
+            logger.warning("JSON parsing failed, triggering fallback to text extraction")
+            raise ValueError(f"Failed to parse vision response: {e}")
 
     def _save_document_metadata(self, document: Document):
         """Save document metadata to metadata.json file"""

@@ -15,19 +15,20 @@ from app.models.document import Page, Document, DocumentStatus
 
 class VisionPDFProcessor(BaseProcessor):
     """
-    PDF processor with intelligent page combining for optimal quality:
-    - If PDF has < 20 pages: combines all pages into 1 high-quality image
-    - If PDF has ≥ 20 pages: uses maximum 20 pages per combined image
+    PDF processor with intelligent page combining optimized for defect detection:
+    - If PDF has < 9 pages: combines all pages into 1 high-quality image
+    - If PDF has ≥ 9 pages: uses maximum 9 pages per combined image (3x3 grid)
     - Adaptive grid layouts based on page count
-    - Enhanced image quality with higher resolution and JPEG quality
+    - HIGH QUALITY settings for defect detection: render_scale=2.0, jpeg_quality=95
+    - Larger image sizes (4000x4000) for better defect visibility
     """
 
     def __init__(
         self,
-        render_scale: float = 1.5,  # Balanced quality/performance (reduced from 2.0)
-        jpeg_quality: int = 85,     # Balanced quality/file size (reduced from 95)
-        max_image_size: tuple = (3500, 3500),  # Reduced from 4000x4000 for better memory usage
-        max_pages_per_image: int = 20,
+        render_scale: float = 2.0,  # HIGH quality for defect detection
+        jpeg_quality: int = 95,     # HIGH quality for preserving defect details
+        max_image_size: tuple = (4000, 4000),  # Larger for defect visibility
+        max_pages_per_image: int = 9,  # Optimal 3x3 grid for defect analysis
         storage_root: str = None
     ):
         if storage_root is None:
@@ -71,7 +72,7 @@ class VisionPDFProcessor(BaseProcessor):
         """
         actual_pages = len(pdf_pages)
         
-        # Calculate optimal grid layout based on number of pages
+        # Calculate optimal grid layout based on number of pages (optimized for defect detection)
         if actual_pages <= 1:
             cols, rows = 1, 1
         elif actual_pages <= 2:
@@ -81,14 +82,10 @@ class VisionPDFProcessor(BaseProcessor):
         elif actual_pages <= 6:
             cols, rows = 3, 2  # 6 pages: 3 columns, 2 rows
         elif actual_pages <= 9:
-            cols, rows = 3, 3  # 7-9 pages: 3 columns, 3 rows
-        elif actual_pages <= 12:
-            cols, rows = 4, 3
-        elif actual_pages <= 16:
-            cols, rows = 4, 4
+            cols, rows = 3, 3  # 7-9 pages: 3 columns, 3 rows (OPTIMAL for defect detection)
         else:
-            # For more than 16 pages, use 4x5 grid (max 20 pages)
-            cols, rows = 4, 5
+            # For more than 9 pages, use 3x3 grid (should not reach here if max_pages_per_image=9)
+            cols, rows = 3, 3
         
         logger.info(f"Creating combined image with {actual_pages} pages in {cols}x{rows} grid")
         
@@ -218,15 +215,15 @@ class VisionPDFProcessor(BaseProcessor):
             
             logger.info(f"PDF has {total_pages} pages")
             
-            # Determine page grouping strategy
-            if total_pages < 20:
+            # Determine page grouping strategy (optimized for defect detection)
+            if total_pages < self.max_pages_per_image:
                 # Combine all pages into 1 image
                 pages_per_group = total_pages
-                logger.info(f"PDF has < 20 pages → combining all {total_pages} pages into 1 image")
+                logger.info(f"PDF has < {self.max_pages_per_image} pages → combining all {total_pages} pages into 1 high-quality image")
             else:
-                # Use maximum 20 pages per image
+                # Use maximum pages_per_image (default 9 for optimal 3x3 grid)
                 pages_per_group = self.max_pages_per_image
-                logger.info(f"PDF has ≥ 20 pages → using maximum {pages_per_group} pages per image")
+                logger.info(f"PDF has ≥ {self.max_pages_per_image} pages → using maximum {pages_per_group} pages per image for optimal defect detection")
             
             # Process pages in groups
             combined_images = []
@@ -269,17 +266,21 @@ class VisionPDFProcessor(BaseProcessor):
                     progressive=True
                 )
                 
+                # Store dimensions before freeing memory
+                combined_width = combined_img.width
+                combined_height = combined_img.height
+                
                 # Free image memory
                 img_size_mb = os.path.getsize(output_path) / (1024 * 1024)
                 logger.debug(f"Saved image {image_num}: {img_size_mb:.2f} MB")
                 combined_img = None
                 
-                # Store image info
+                # Store image info (using saved dimensions)
                 combined_images.append({
                     "image_path": str(output_path),
                     "image_number": image_num,
-                    "width": combined_img.width,
-                    "height": combined_img.height,
+                    "width": combined_width,
+                    "height": combined_height,
                     "page_range": (start_page_num, start_idx + len(page_group)),
                     "pages_in_image": len(page_group)
                 })
@@ -320,7 +321,8 @@ class VisionPDFProcessor(BaseProcessor):
 
             logger.info(f"Successfully processed {total_pages} pages into {len(combined_images)} high-quality combined image(s)")
             logger.info(f"Document directory: {doc_dir}")
-            logger.info(f"Strategy: {'All pages in 1 image' if total_pages < 20 else f'Max {self.max_pages_per_image} pages per image'}")
+            logger.info(f"Strategy: {'All pages in 1 image' if total_pages < self.max_pages_per_image else f'Max {self.max_pages_per_image} pages per image'}")
+            logger.info(f"Quality settings: render_scale={self.render_scale}, jpeg_quality={self.jpeg_quality}% (optimized for defect detection)")
 
             return document
 

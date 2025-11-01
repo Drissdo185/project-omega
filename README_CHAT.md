@@ -4,6 +4,8 @@
 
 The `/app/chat` module provides an intelligent question-answering system that uses document page summaries to select relevant pages, then analyzes those specific images with vision AI to answer user questions.
 
+**🆕 NEW: Defect Detection System** - Specialized service for high-quality defect detection in PDF documents using GPT-4/GPT-5 with optimized image processing. See [DEFECT_DETECTION_GUIDE.md](DEFECT_DETECTION_GUIDE.md) for details.
+
 ## 🏗️ Architecture
 
 ```

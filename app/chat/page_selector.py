@@ -1,6 +1,7 @@
 """
 Page selector that uses page summaries to identify relevant pages for a query.
 This reduces costs by only sending relevant images to the LLM.
+OPTIMIZED: Phase 1 - Dynamic Token Budgeting
 """
 
 import json
@@ -9,6 +10,7 @@ from loguru import logger
 
 from app.models.document import Document, Page
 from app.providers.base import BaseProvider
+from app.ai.token_optimizer import TokenBudgetOptimizer, ContentComplexity
 
 
 class PageSelector:
@@ -54,6 +56,18 @@ class PageSelector:
             # Build context with all page summaries (optimized)
             pages_context = self._build_pages_context(document)
 
+            # Calculate DYNAMIC token budget based on content
+            summary_length = sum(len(p.summary or "") for p in document.pages)
+            complexity = TokenBudgetOptimizer.detect_complexity_from_text(user_question)
+            
+            token_budget = TokenBudgetOptimizer.calculate_page_selection_budget(
+                num_available_pages=len(document.pages),
+                summary_length=summary_length,
+                complexity=complexity
+            )
+            
+            logger.info(f"Dynamic token budget for page selection: {token_budget} (complexity: {complexity.value})")
+
             # Build prompt for page selection (agent decides count)
             prompt = self._build_selection_prompt(user_question, pages_context, max_pages)
 
@@ -61,7 +75,14 @@ class PageSelector:
             messages = [
                 {
                     "role": "system",
-                    "content": "You are an expert document analyst. Based ONLY on the page summaries provided, identify which pages are most relevant to answer the question. Select as few pages as needed for accuracy. Do not use external knowledge - only consider the summaries given."
+                    "content": """You are an expert document analyst. Based ONLY on the page summaries provided, identify which pages are most relevant to answer the question.
+
+IMPORTANT RULES:
+1. AVOID table of contents, indexes, or pages that only list topics - prefer pages with actual detailed content
+2. If a page summary is just a list of topics/headers, it's likely NOT the best page (look for pages with explanatory text)
+3. Select pages that contain substantive information to answer the question
+4. Select as few pages as needed for accuracy
+5. Do not use external knowledge - only consider the summaries given"""
                 },
                 {
                     "role": "user",
@@ -71,7 +92,7 @@ class PageSelector:
 
             response = await self.provider.process_text_messages(
                 messages=messages,
-                max_tokens=300,  # Reduced from 500 since we only need page numbers
+                max_tokens=token_budget,  # Dynamic budget optimization
                 temperature=1.0  # GPT-5 only supports temperature=1
             )
 
@@ -85,6 +106,12 @@ class PageSelector:
 
             # Get actual Page objects (optimized lookup)
             selected_pages = self._get_pages_by_numbers(document, selected_page_numbers)
+
+            # Post-filter: Remove obvious table of contents pages
+            filtered_pages = self._filter_out_toc_pages(selected_pages)
+            if len(filtered_pages) < len(selected_pages):
+                logger.info(f"Filtered out {len(selected_pages) - len(filtered_pages)} table of contents pages")
+                selected_pages = filtered_pages
 
             # Track cost
             cost = self.provider.get_last_cost() or 0.0
@@ -110,13 +137,17 @@ class PageSelector:
             return document.pages[:fallback_count]
 
     def _build_pages_context(self, document: Document) -> str:
-        """Build formatted context of all page summaries"""
+        """Build formatted context of all page summaries (truncated for efficiency)"""
         lines = [f"Document: {document.name}"]
         lines.append(f"Total pages: {document.page_count}")
         lines.append("\nPage summaries:")
         
         for page in document.pages:
             summary = page.summary or "No summary available"
+            # Truncate very long summaries to keep prompt manageable
+            # Most summaries should be under 500 chars, but some might be longer
+            if len(summary) > 800:
+                summary = summary[:800] + "..."
             lines.append(f"\nPage {page.page_number}: {summary}")
         
         return "\n".join(lines)
@@ -139,22 +170,16 @@ class PageSelector:
    - Complex questions (e.g., "Compare X and Y") may need more pages
    - Choose quality over quantity - only select pages that will help"""
         
-        return f"""Given a user's question and summaries of all pages in a document, identify which pages are most relevant to answer the question.
-
-User Question:
-{user_question}
+        return f"""Question: {user_question}
 
 {pages_context}
 
-Task:
-1. Analyze which pages contain information relevant to the user's question
+INSTRUCTIONS:
+1. Select pages with DETAILED CONTENT (skip table of contents/indexes)
 {constraint}
-3. Return ONLY a JSON array of page numbers in order of relevance (most relevant first)
+3. Return ONLY a JSON array: [3, 7, 9]
 
-Example response format:
-[1, 3, 7]
-
-Your response (JSON array only):"""
+Response:"""
 
     def _parse_page_numbers(self, response: str) -> List[int]:
         """Parse page numbers from LLM response"""
@@ -197,6 +222,53 @@ Your response (JSON array only):"""
                 selected_pages.append(page_dict[page_num])
         
         return selected_pages
+
+    def _filter_out_toc_pages(self, pages: List[Page]) -> List[Page]:
+        """
+        Filter out pages that look like table of contents or indexes.
+        
+        Heuristics:
+        - Contains "Table of contents" or "Contents" in summary
+        - High density of numbers (likely page numbers)
+        - Many short lines (likely section headings)
+        """
+        filtered = []
+        
+        for page in pages:
+            summary = page.summary or ""
+            summary_lower = summary.lower()
+            
+            # Check for obvious TOC indicators
+            is_toc = False
+            
+            # Pattern 1: Explicit "table of contents" mention
+            if "table of contents" in summary_lower or summary_lower.startswith("contents"):
+                is_toc = True
+            
+            # Pattern 2: High ratio of digits (> 15% of characters are digits)
+            # This catches pages with many page numbers
+            digit_count = sum(c.isdigit() for c in summary)
+            if len(summary) > 0 and (digit_count / len(summary)) > 0.15:
+                is_toc = True
+            
+            # Pattern 3: Many line breaks with short lines (list format)
+            lines = summary.split('\n')
+            if len(lines) > 10:
+                short_lines = sum(1 for line in lines if 0 < len(line.strip()) < 50)
+                if short_lines / len(lines) > 0.7:  # 70% of lines are short
+                    is_toc = True
+            
+            if not is_toc:
+                filtered.append(page)
+            else:
+                logger.info(f"Filtered out page {page.page_number} (looks like table of contents)")
+        
+        # If we filtered everything, keep the original list (don't return empty)
+        if not filtered:
+            logger.warning("All pages looked like TOC, keeping original selection")
+            return pages
+        
+        return filtered
 
     async def select_all_pages(self, document: Document) -> List[Page]:
         """
