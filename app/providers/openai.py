@@ -1,50 +1,44 @@
-"""OpenAI provider implementation for OpenAI-compatible endpoints"""
+"""OpenAI provider implementation for OpenAI-compatible endpoints (Responses API)"""
 
 import os
 import base64
 from typing import List, Dict, Any, Optional
 from loguru import logger
 from openai import OpenAI
-import openai
 from dotenv import load_dotenv
 
 from .base import BaseProvider
 
 load_dotenv()
+
 class OpenAIProvider(BaseProvider):
     """
     OpenAI provider for LLM interactions
-    Works with OpenAI-compatible API endpoints
+    Works with OpenAI-compatible API endpoints (Responses API)
     """
 
     def __init__(
         self,
         api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        model: str = "gpt-5"
+        model: str = "gpt-4o-mini-2024-07-18"
     ):
         """
         Initialize OpenAI provider
 
         Args:
             api_key: API key (defaults to OPENAI_API_KEY env var)
-            base_url: Base URL for API endpoint (defaults to OPENAI_BASE_URL env var)
             model: Model name to use
         """
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self.base_url = base_url or os.getenv("OPENAI_BASE_URL", "https://aiportalapi.stu-platform.live/use")
         self.model_name = model
 
         if not self.api_key:
             raise ValueError("API key is required. Set OPENAI_API_KEY environment variable.")
 
-        self.client = openai.OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url
-        )
-
+        self.client = OpenAI(api_key=self.api_key)
         self.last_cost = None
-        logger.info(f"Initialized OpenAI provider with base_url: {self.base_url}, model: {self.model_name}")
+
+        logger.info(f"Initialized OpenAI provider with model: {self.model_name}")
 
     async def process_text_messages(
         self,
@@ -52,20 +46,23 @@ class OpenAIProvider(BaseProvider):
         max_tokens: int = 3000,
         **kwargs
     ) -> str:
-        """Process text-only messages"""
+        """Process text-only messages using the Responses API"""
         try:
-            response = self.client.chat.completions.create(
+            # Flatten messages to text input for Responses API
+            # You can concatenate messages or map them depending on your format
+            input_data = messages
+
+            response = self.client.responses.create(
                 model=self.model_name,
-                messages=messages,
-                max_tokens=max_tokens,
+                input=input_data,
+                max_output_tokens=max_tokens,
                 **kwargs
             )
 
-            # Track cost if usage is available
-            if hasattr(response, 'usage'):
+            if hasattr(response, "usage"):
                 self._calculate_cost(response.usage)
 
-            return response.choices[0].message.content.strip()
+            return response.output_text.strip() if hasattr(response, "output_text") else ""
 
         except Exception as e:
             logger.error(f"OpenAI text processing error: {e}")
@@ -77,75 +74,59 @@ class OpenAIProvider(BaseProvider):
         max_tokens: int = 3000,
         **kwargs
     ) -> str:
-        """Process multimodal messages (text + images)"""
+        """Process multimodal messages (text + images) using the Responses API"""
         try:
-            # Convert messages to OpenAI format
             formatted_messages = self._format_multimodal_messages(messages)
 
-            response = self.client.chat.completions.create(
+            response = self.client.responses.create(
                 model=self.model_name,
-                messages=formatted_messages,
-                max_tokens=max_tokens,
+                input=formatted_messages,
+                max_output_tokens=max_tokens,
                 **kwargs
             )
 
-            # Track cost if usage is available
-            if hasattr(response, 'usage'):
+            if hasattr(response, "usage"):
                 self._calculate_cost(response.usage)
 
-            return response.choices[0].message.content.strip()
+            return response.output_text.strip() if hasattr(response, "output_text") else ""
 
         except Exception as e:
             logger.error(f"OpenAI multimodal processing error: {e}")
             raise
 
     def _format_multimodal_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Convert our internal message format to OpenAI format"""
+        """Convert internal message format to Responses API input format"""
         formatted = []
 
         for msg in messages:
-            if msg["role"] == "system":
+            role = msg.get("role")
+            content = msg.get("content")
+
+            if isinstance(content, str):
                 formatted.append({
-                    "role": "system",
-                    "content": msg["content"]
+                    "role": role,
+                    "content": content
                 })
-            elif msg["role"] == "user":
-                # Handle multimodal content
-                content = msg.get("content")
+            elif isinstance(content, list):
+                formatted_content = []
+                for item in content:
+                    if item["type"] == "text":
+                        formatted_content.append({
+                            "type": "input_text",
+                            "text": item["text"]
+                        })
+                    elif item["type"] == "image_path":
+                        image_data = self._encode_image(item["image_path"])
+                        formatted_content.append({
+                            "type": "input_image",
+                            "image_url": f"data:image/jpeg;base64,{image_data}"
+                        })
 
-                if isinstance(content, str):
-                    # Simple text message
-                    formatted.append({
-                        "role": "user",
-                        "content": content
-                    })
-                elif isinstance(content, list):
-                    # Multimodal content (text + images)
-                    formatted_content = []
-
-                    for item in content:
-                        if item["type"] == "text":
-                            formatted_content.append({
-                                "type": "text",
-                                "text": item["text"]
-                            })
-                        elif item["type"] == "image_path":
-                            # Read image and encode to base64
-                            image_data = self._encode_image(item["image_path"])
-                            formatted_content.append({
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{image_data}",
-                                    "detail": item.get("detail", "auto")
-                                }
-                            })
-
-                    formatted.append({
-                        "role": "user",
-                        "content": formatted_content
-                    })
+                formatted.append({
+                    "role": role,
+                    "content": formatted_content
+                })
             else:
-                # Assistant or other roles
                 formatted.append(msg)
 
         return formatted
@@ -153,22 +134,22 @@ class OpenAIProvider(BaseProvider):
     def _encode_image(self, image_path: str) -> str:
         """Encode image to base64"""
         try:
-            with open(image_path, "rb") as image_file:
-                return base64.b64encode(image_file.read()).decode("utf-8")
+            with open(image_path, "rb") as f:
+                return base64.b64encode(f.read()).decode("utf-8")
         except Exception as e:
             logger.error(f"Failed to encode image {image_path}: {e}")
             raise
 
     def _calculate_cost(self, usage) -> None:
         """
-        Calculate cost based on token usage
-        gpt-5 pricing (approximate):
+        Calculate cost based on token usage (approximate)
+        gpt-5 pricing (example):
         - Input: $2.50 per 1M tokens
         - Output: $10.00 per 1M tokens
         """
         try:
-            input_cost = (usage.prompt_tokens / 1_000_000) * 2.50
-            output_cost = (usage.completion_tokens / 1_000_000) * 10.00
+            input_cost = (usage.input_tokens / 1_000_000) * 2.50
+            output_cost = (usage.output_tokens / 1_000_000) * 10.00
             self.last_cost = input_cost + output_cost
         except Exception as e:
             logger.debug(f"Failed to calculate cost: {e}")

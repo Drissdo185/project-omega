@@ -50,6 +50,6 @@ def create_provider_from_env() -> BaseProvider:
     """
     return OpenAIProvider(
         api_key=os.environ.get("OPENAI_API_KEY"),
-        base_url=os.environ.get("OPENAI_BASE_URL"),
+        # base_url=os.environ.get("OPENAI_BASE_URL"),
         model=os.environ.get("OPENAI_MODEL", "gpt-5")
     )
