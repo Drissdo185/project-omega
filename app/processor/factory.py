@@ -11,9 +11,9 @@ class ProcessorFactory:
         
         if file_path.lower().endswith('.pdf'):
             return VisionPDFProcessor(
-                render_scale=config.get('render_scale', 2.0),
-                jpeg_quality=config.get('jpeg_quality', 90),
-                max_image_size=config.get('max_image_size', (1400, 1400))
+                render_scale=config.get('render_scale'),
+                jpeg_quality=config.get('jpeg_quality'),
+                max_image_size=config.get('max_image_size')
             )
         
         raise ValueError(f"No vision processor for file: {file_path}")

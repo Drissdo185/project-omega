@@ -72,7 +72,7 @@ class VisionAnalysisService:
             # Get analysis from LLM
             response = await self.provider.process_multimodal_messages(
                 messages=messages,
-                max_tokens=3000,
+                max_tokens=1000,
             )
 
             # Parse the response to get structured data
@@ -95,32 +95,34 @@ class VisionAnalysisService:
     async def analyze_document(
         self,
         document: Document,
-        max_pages: Optional[int] = None
+        max_pages: Optional[int] = None,
+        max_concurrent: int = 10  # Add concurrency control
     ) -> Document:
         """
-        Analyze entire document with all pages and save metadata
+        Analyze entire document with concurrent page processing and save metadata
 
         Args:
             document: Document object with pages
             max_pages: Optional limit on number of pages to analyze
+            max_concurrent: Number of pages to process concurrently (default: 5)
 
         Returns:
             Document object with updated summaries, tables, and charts
         """
         try:
             logger.info(f"Starting analysis of document: {document.name} ({document.page_count} pages)")
-
-            # Analyze each page
+            
             pages_to_analyze = document.pages[:max_pages] if max_pages else document.pages
-
-            for page in pages_to_analyze:
-                # Provide context about the document
+            
+            # Process pages concurrently in batches
+            import asyncio
+            
+            async def analyze_single_page(page: Page):
+                """Analyze a single page and update it with results"""
                 context = f"This is page {page.page_number} of {document.page_count} from '{document.name}'"
-
-                # Get page analysis from LLM
                 page_data = await self.analyze_page(page, context)
-
-                # Update page with analysis results
+                
+                # Update page with results
                 page.summary = page_data.get("summary", "")
                 
                 # Add tables
@@ -141,16 +143,32 @@ class VisionAnalysisService:
                         summary=chart_dict.get("summary", "")
                     )
                     page.charts.append(chart)
-
+            
+            # Process in batches to avoid overwhelming the API
+            total_batches = (len(pages_to_analyze) + max_concurrent - 1) // max_concurrent
+            
+            for i in range(0, len(pages_to_analyze), max_concurrent):
+                batch = pages_to_analyze[i:i + max_concurrent]
+                batch_num = i // max_concurrent + 1
+                
+                logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch)} pages)")
+                
+                # Process all pages in the batch concurrently
+                await asyncio.gather(*[analyze_single_page(page) for page in batch])
+                
+                logger.info(f"Completed batch {batch_num}/{total_batches}")
+            
             # Create document-level summary
             total_tables = sum(len(p.tables) for p in pages_to_analyze)
             total_charts = sum(len(p.charts) for p in pages_to_analyze)
             document.summary = f"Document with {len(pages_to_analyze)} pages analyzed. Contains {total_tables} tables and {total_charts} charts."
-
+            
             # Save complete metadata to JSON
             self._save_document_metadata(document)
-
+            
             logger.info(f"Document analysis complete for: {document.name}")
+            logger.info(f"Total: {len(pages_to_analyze)} pages, {total_tables} tables, {total_charts} charts")
+            
             return document
 
         except Exception as e:
@@ -158,50 +176,24 @@ class VisionAnalysisService:
             raise
 
     def _build_analysis_prompt(self, context: str = "") -> str:
-        """Build prompt for page analysis with table/chart detection"""
-        return f"""Analyze this document page and extract:
+        """Condensed prompt for faster processing with multi-page content awareness"""
+        return f"""Analyze this page and return JSON only:
 
-1. **General Summary**: Comprehensive summary of all content on the page
-2. **Tables**: Identify any tables with:
-   - table_id (format: table_X_Y where X=page number, Y=sequence starting from 1)
-   - title (caption or descriptive title)
-   - summary (detailed summary of the table's data and key insights)
-3. **Charts**: Identify any charts/graphs with:
-   - chart_id (format: chart_X_Y where X=page number, Y=sequence starting from 1)
-   - title (chart title or description)
-   - chart_type (one of: line, bar, pie, scatter, area)
-   - summary (detailed summary of the chart's insights and data patterns)
-
-Return your analysis as a JSON object with this exact structure:
-{{
-  "summary": "comprehensive page summary here",
-  "tables": [
     {{
-      "table_id": "table_1_1",
-      "title": "Table Title",
-      "summary": "Detailed table summary"
+    "summary": "brief page summary",
+    "tables": [{{"table_id": "table_X_Y", "title": "...", "summary": "..."}}],
+    "charts": [{{"chart_id": "chart_X_Y", "title": "...", "chart_type": "line|bar|pie|scatter|area", "summary": "..."}}]
     }}
-  ],
-  "charts": [
-    {{
-      "chart_id": "chart_1_1",
-      "title": "Chart Title",
-      "chart_type": "line",
-      "summary": "Detailed chart summary"
-    }}
-  ]
-}}
 
-IMPORTANT:
-- Return ONLY valid JSON, no additional text
-- If no tables found, use empty array: "tables": []
-- If no charts found, use empty array: "charts": []
-- Keep summaries factual and detailed
-- For tables, describe the data structure and key values
-- For charts, describe trends, patterns, and key data points
+    Rules:
+    - Empty arrays if none found
+    - IDs format: table/chart_{{page}}_{{seq}}
+    - Return valid JSON only
+    - If content appears incomplete/cut-off (table/chart continues on next page), note this in summary with "(continued)" or "(partial)"
+    - If content seems to continue from previous page, note with "(continuation from previous page)"
+    - For split tables/charts, still create entry but indicate incompleteness
 
-{context}
-"""
+    {context}"""
 
     def _parse_page_response(self, response: str, page_number: int) -> dict:
         """Parse LLM response to extract structured page data"""

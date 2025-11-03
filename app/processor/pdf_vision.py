@@ -17,9 +17,9 @@ class VisionPDFProcessor(BaseProcessor):
 
     def __init__(
         self,
-        render_scale: float = 2.0,
-        jpeg_quality: int = 90,
-        max_image_size: tuple = (1400, 1400),
+        render_scale: float = 1.5,
+        jpeg_quality: int = 75,
+        max_image_size: tuple = (1024, 1024),
         storage_root: str = None
     ):
         if storage_root is None:
