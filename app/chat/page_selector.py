@@ -4,10 +4,10 @@ This reduces costs by only sending relevant images to the LLM.
 """
 
 import json
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from loguru import logger
 
-from app.models.document import Document, Page
+from app.models.document import Document, Page, Partition
 from app.providers.base import BaseProvider
 
 
@@ -27,25 +27,35 @@ class PageSelector:
         self,
         document: Document,
         user_question: str,
-        max_pages: int = None
+        max_pages: int = None,
+        partitions: Optional[List[Partition]] = None,
+        model: Optional[str] = None
     ) -> List[Page]:
         """
         Select most relevant pages for a user question based on page summaries.
         The agent decides how many pages are needed based on question complexity.
-        
+
         Args:
             document: Document with page summaries
             user_question: User's question
             max_pages: Optional hard limit on pages (None = let agent decide)
-            
+            partitions: Optional list of partitions to filter pages by (for large documents)
+
         Returns:
             List of selected Page objects, ordered by relevance
         """
         try:
             logger.info(f"Selecting relevant pages for question: {user_question}")
 
-            # Build context with all page summaries
-            pages_context = self._build_pages_context(document)
+            # Filter pages by partitions if provided (for large documents)
+            if partitions:
+                candidate_pages = self._filter_pages_by_partitions(document, partitions)
+                logger.info(f"Filtering to {len(candidate_pages)} pages from {len(partitions)} selected partitions")
+            else:
+                candidate_pages = document.pages
+
+            # Build context with page summaries (only from candidate pages)
+            pages_context = self._build_pages_context_from_pages(document, candidate_pages)
 
             # Build prompt for page selection (agent decides count)
             prompt = self._build_selection_prompt(user_question, pages_context, max_pages)
@@ -64,7 +74,8 @@ class PageSelector:
 
             response = await self.provider.process_text_messages(
                 messages=messages,
-                max_tokens=500
+                max_tokens=500,
+                model=model
             )
 
             # Parse selected page numbers
@@ -75,8 +86,8 @@ class PageSelector:
                 logger.info(f"Agent selected {len(selected_page_numbers)} pages, limiting to {max_pages}")
                 selected_page_numbers = selected_page_numbers[:max_pages]
 
-            # Get actual Page objects
-            selected_pages = self._get_pages_by_numbers(document, selected_page_numbers)
+            # Get actual Page objects from candidate pages
+            selected_pages = self._get_pages_by_numbers_from_list(candidate_pages, selected_page_numbers)
 
             # Track cost
             cost = self.provider.get_last_cost() or 0.0
@@ -87,20 +98,49 @@ class PageSelector:
 
         except Exception as e:
             logger.error(f"Failed to select relevant pages: {e}")
-            # Fallback: return first few pages
+            # Fallback: return first few pages from candidates
             fallback_count = max_pages if max_pages else 3
-            return document.pages[:fallback_count]
+            candidate_pages = self._filter_pages_by_partitions(document, partitions) if partitions else document.pages
+            return candidate_pages[:fallback_count]
+
+    def _filter_pages_by_partitions(self, document: Document, partitions: List[Partition]) -> List[Page]:
+        """
+        Filter pages to only include those within the given partitions
+
+        Args:
+            document: Document with all pages
+            partitions: List of partitions to filter by
+
+        Returns:
+            List of pages within the partition ranges
+        """
+        if not partitions:
+            return document.pages
+
+        filtered_pages = []
+        for partition in partitions:
+            start_page, end_page = partition.page_range
+            for page in document.pages:
+                if start_page <= page.page_number <= end_page:
+                    filtered_pages.append(page)
+
+        return filtered_pages
 
     def _build_pages_context(self, document: Document) -> str:
         """Build formatted context of all page summaries"""
+        return self._build_pages_context_from_pages(document, document.pages)
+
+    def _build_pages_context_from_pages(self, document: Document, pages: List[Page]) -> str:
+        """Build formatted context from a filtered list of pages"""
         lines = [f"Document: {document.name}"]
-        lines.append(f"Total pages: {document.page_count}")
+        lines.append(f"Total pages in document: {document.page_count}")
+        lines.append(f"Candidate pages to select from: {len(pages)}")
         lines.append("\nPage summaries:")
-        
-        for page in document.pages:
+
+        for page in pages:
             summary = page.summary or "No summary available"
             lines.append(f"\nPage {page.page_number}: {summary}")
-        
+
         return "\n".join(lines)
 
     def _build_selection_prompt(
@@ -168,16 +208,24 @@ Your response (JSON array only):"""
         document: Document,
         page_numbers: List[int]
     ) -> List[Page]:
-        """Get Page objects by their page numbers"""
+        """Get Page objects by their page numbers from entire document"""
+        return self._get_pages_by_numbers_from_list(document.pages, page_numbers)
+
+    def _get_pages_by_numbers_from_list(
+        self,
+        pages: List[Page],
+        page_numbers: List[int]
+    ) -> List[Page]:
+        """Get Page objects by their page numbers from a given list of pages"""
         selected_pages = []
-        
+
         for page_num in page_numbers:
             # Find page with matching page_number
-            for page in document.pages:
+            for page in pages:
                 if page.page_number == page_num:
                     selected_pages.append(page)
                     break
-        
+
         return selected_pages
 
     async def select_all_pages(self, document: Document) -> List[Page]:

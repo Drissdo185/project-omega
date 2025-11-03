@@ -6,31 +6,40 @@ Uses page summaries to select relevant pages, then analyzes images to answer.
 from typing import List, Optional, Dict
 from loguru import logger
 
-from app.models.document import Document, Page
+from app.models.document import Document, Page, Partition
 from app.providers.base import BaseProvider
 from .page_selector import PageSelector
+from .partition_selector import PartitionSelector
 
 
 class ChatAgent:
     """
     Intelligent agent that answers questions about documents using vision analysis.
-    
-    Workflow:
+
+    Workflow for small documents (≤20 pages) - 2-stage:
     1. User asks a question
     2. Agent selects relevant pages based on summaries (cost-effective filtering)
     3. Agent sends selected page images to LLM for detailed analysis
     4. Returns answer with source pages
+
+    Workflow for large documents (>20 pages) - 3-stage hierarchical:
+    1. User asks a question
+    2. Agent selects 1-2 relevant partitions based on partition summaries
+    3. Agent selects 2-5 relevant pages from those partitions only
+    4. Agent sends selected page images to LLM for detailed analysis
+    5. Returns answer with source pages
     """
 
     def __init__(self, provider: BaseProvider):
         """
         Initialize chat agent
-        
+
         Args:
             provider: LLM provider with vision capabilities
         """
         self.provider = provider
         self.page_selector = PageSelector(provider)
+        self.partition_selector = PartitionSelector(provider)
         self.total_cost = 0.0
 
     async def answer_question(
@@ -41,62 +50,71 @@ class ChatAgent:
         use_all_pages: bool = False
     ) -> Dict:
         """
-        Answer a question about a document
-        
+        Answer a question about a document using conditional 2-stage or 3-stage flow
+
         Args:
-            document: Document with page summaries
+            document: Document with page summaries (and partitions if >20 pages)
             question: User's question
             max_pages: Optional hard limit on pages (None = agent decides dynamically)
             use_all_pages: If True, use all pages (no selection)
-            
+
         Returns:
-            Dict with answer, selected_pages, and cost information
+            Dict with answer, selected_pages, partition info, and cost information
         """
         try:
             logger.info(f"Answering question: {question}")
             logger.info(f"Document: {document.name} ({document.page_count} pages)")
 
-            # Step 1: Select relevant pages
-            if use_all_pages:
-                logger.info("Using all pages (no filtering)")
-                selected_pages = await self.page_selector.select_all_pages(document)
-            else:
-                if max_pages:
-                    logger.info(f"Agent selecting relevant pages (hard limit: {max_pages})...")
-                else:
-                    logger.info("Agent selecting relevant pages (deciding count dynamically)...")
-                selected_pages = await self.page_selector.select_relevant_pages(
+            # Conditional flow based on document size
+            if document.is_large_document() and document.has_partitions() and not use_all_pages:
+                # 3-STAGE HIERARCHICAL FLOW for large documents (>20 pages)
+                logger.info("Using 3-stage hierarchical flow (large document)")
+                selected_pages, partition_cost, selection_cost, selected_partitions = await self._three_stage_selection(
                     document=document,
-                    user_question=question,
+                    question=question,
                     max_pages=max_pages
                 )
+            else:
+                # 2-STAGE FLOW for small documents (≤20 pages)
+                logger.info("Using 2-stage flow (small document)")
+                selected_pages, selection_cost = await self._two_stage_selection(
+                    document=document,
+                    question=question,
+                    max_pages=max_pages,
+                    use_all_pages=use_all_pages
+                )
+                partition_cost = 0.0
+                selected_partitions = []
 
             if not selected_pages:
                 logger.warning("No pages selected, using first page as fallback")
                 selected_pages = [document.pages[0]] if document.pages else []
-
-            selection_cost = self.provider.get_last_cost() or 0.0
 
             if not selected_pages:
                 return {
                     "answer": "No pages available to analyze.",
                     "selected_pages": [],
                     "page_numbers": [],
-                    "total_cost": selection_cost,
+                    "total_cost": selection_cost + partition_cost,
+                    "partition_cost": partition_cost,
                     "selection_cost": selection_cost,
-                    "analysis_cost": 0.0
+                    "analysis_cost": 0.0,
+                    "selected_partitions": []
                 }
 
-            # Step 2: Analyze selected pages with vision to answer question
-            logger.info(f"Analyzing {len(selected_pages)} selected pages...")
+            # Final stage: Analyze selected pages with vision to answer question
+            # Use model based on flow: 2-stage uses gpt-4o-mini, 3-stage uses gpt-5
+            model_for_vision = self.provider.get_model_3stage() if (document.is_large_document() and document.has_partitions()) else self.provider.get_model_2stage()
+            logger.info(f"Analyzing {len(selected_pages)} selected pages with vision model {model_for_vision}...")
             answer = await self._analyze_pages_for_answer(
                 pages=selected_pages,
                 question=question,
-                document_name=document.name
+                document_name=document.name,
+                model=model_for_vision
             )
 
             analysis_cost = self.provider.get_last_cost() or 0.0
-            total_cost = selection_cost + analysis_cost
+            total_cost = partition_cost + selection_cost + analysis_cost
 
             # Track cumulative cost
             self.total_cost += total_cost
@@ -106,12 +124,14 @@ class ChatAgent:
                 "selected_pages": selected_pages,
                 "page_numbers": [p.page_number for p in selected_pages],
                 "total_cost": total_cost,
+                "partition_cost": partition_cost,
                 "selection_cost": selection_cost,
-                "analysis_cost": analysis_cost
+                "analysis_cost": analysis_cost,
+                "selected_partitions": [p.partition_id for p in selected_partitions] if selected_partitions else []
             }
 
             logger.info(f"Question answered successfully!")
-            logger.info(f"Cost breakdown - Selection: ${selection_cost:.4f}, Analysis: ${analysis_cost:.4f}, Total: ${total_cost:.4f}")
+            logger.info(f"Cost breakdown - Partition: ${partition_cost:.4f}, Selection: ${selection_cost:.4f}, Analysis: ${analysis_cost:.4f}, Total: ${total_cost:.4f}")
 
             return result
 
@@ -119,20 +139,95 @@ class ChatAgent:
             logger.error(f"Failed to answer question: {e}")
             raise
 
+    async def _two_stage_selection(
+        self,
+        document: Document,
+        question: str,
+        max_pages: int = None,
+        use_all_pages: bool = False
+    ) -> tuple:
+        """
+        2-stage selection for small documents (≤20 pages)
+        Uses gpt-4o-mini model
+
+        Returns:
+            tuple: (selected_pages, selection_cost)
+        """
+        if use_all_pages:
+            logger.info("Stage 1/2: Using all pages (no filtering)")
+            selected_pages = await self.page_selector.select_all_pages(document)
+        else:
+            logger.info(f"Stage 1/2: Selecting relevant pages using {self.provider.get_model_2stage()}...")
+            selected_pages = await self.page_selector.select_relevant_pages(
+                document=document,
+                user_question=question,
+                max_pages=max_pages,
+                model=self.provider.get_model_2stage()  # Use gpt-4o-mini for 2-stage
+            )
+
+        selection_cost = self.provider.get_last_cost() or 0.0
+        return selected_pages, selection_cost
+
+    async def _three_stage_selection(
+        self,
+        document: Document,
+        question: str,
+        max_pages: int = None
+    ) -> tuple:
+        """
+        3-stage hierarchical selection for large documents (>20 pages)
+        Uses gpt-5 model for all stages
+
+        Returns:
+            tuple: (selected_pages, partition_cost, selection_cost, selected_partitions)
+        """
+        # Stage 1: Select 1-2 relevant partitions using gpt-5
+        logger.info(f"Stage 1/3: Selecting relevant partitions using {self.provider.get_model_3stage()}...")
+        selected_partitions = await self.partition_selector.select_relevant_partitions(
+            document=document,
+            user_question=question,
+            max_partitions=2,
+            model=self.provider.get_model_3stage()  # Use gpt-5 for 3-stage
+        )
+        partition_cost = self.provider.get_last_cost() or 0.0
+
+        if not selected_partitions:
+            logger.warning("No partitions selected, falling back to first partition")
+            selected_partitions = document.partitions[:1] if document.partitions else []
+
+        # Log selected partitions
+        for partition in selected_partitions:
+            logger.info(f"  Selected Partition {partition.partition_id}: Pages {partition.page_range[0]}-{partition.page_range[1]}")
+
+        # Stage 2: Select 2-5 pages from selected partitions using gpt-5
+        logger.info(f"Stage 2/3: Selecting relevant pages using {self.provider.get_model_3stage()}...")
+        selected_pages = await self.page_selector.select_relevant_pages(
+            document=document,
+            user_question=question,
+            max_pages=max_pages or 5,  # Default to 5 pages for large documents
+            partitions=selected_partitions,
+            model=self.provider.get_model_3stage()  # Use gpt-5 for 3-stage
+        )
+        selection_cost = self.provider.get_last_cost() or 0.0
+
+        return selected_pages, partition_cost, selection_cost, selected_partitions
+
     async def _analyze_pages_for_answer(
         self,
         pages: List[Page],
         question: str,
-        document_name: str
+        document_name: str,
+        model: Optional[str] = None
     ) -> str:
         """
         Analyze selected page images to answer the question
-        
+
         Args:
             pages: Selected pages to analyze
             question: User's question
             document_name: Name of the document
-            
+            model: Specific model to use for vision analysis
+
         Returns:
             Answer text from LLM
         """
@@ -165,7 +260,8 @@ class ChatAgent:
             # Get answer from vision model
             response = await self.provider.process_multimodal_messages(
                 messages=messages,
-                max_tokens=3000
+                max_tokens=3000,
+                model=model
             )
 
             return response.strip()

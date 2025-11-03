@@ -111,12 +111,40 @@ class Page:
 
 
 @dataclass
+class Partition:
+    """Logical grouping of pages for large documents (>20 pages)"""
+    partition_id: int  # 1-based partition number
+    page_range: tuple  # (start_page, end_page) inclusive
+    summary: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "partition_id": self.partition_id,
+            "page_range": list(self.page_range),
+            "summary": self.summary
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'Partition':
+        return cls(
+            partition_id=data["partition_id"],
+            page_range=tuple(data["page_range"]),
+            summary=data.get("summary", "")
+        )
+
+    def get_page_count(self) -> int:
+        """Get number of pages in this partition"""
+        return self.page_range[1] - self.page_range[0] + 1
+
+
+@dataclass
 class Document:
     """Document with vision-based pages"""
     id: str
     name: str
     page_count: int
     pages: List[Page] = field(default_factory=list)
+    partitions: List[Partition] = field(default_factory=list)  # For large documents (>20 pages)
     status: DocumentStatus = DocumentStatus.PROCESSING
     summary: Optional[str] = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -131,7 +159,8 @@ class Document:
             "summary": self.summary,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
-            "pages": [p.to_dict() for p in self.pages]
+            "pages": [p.to_dict() for p in self.pages],
+            "partitions": [part.to_dict() for part in self.partitions]
         }
 
     @classmethod
@@ -144,5 +173,14 @@ class Document:
             summary=data.get("summary"),
             created_at=datetime.fromisoformat(data["created_at"]),
             updated_at=datetime.fromisoformat(data["updated_at"]),
-            pages=[Page.from_dict(p) for p in data.get("pages", [])]
+            pages=[Page.from_dict(p) for p in data.get("pages", [])],
+            partitions=[Partition.from_dict(p) for p in data.get("partitions", [])]
         )
+
+    def is_large_document(self) -> bool:
+        """Check if document should use partition-based approach (>20 pages)"""
+        return self.page_count > 20
+
+    def has_partitions(self) -> bool:
+        """Check if document has partition summaries"""
+        return len(self.partitions) > 0

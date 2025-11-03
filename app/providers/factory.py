@@ -51,5 +51,6 @@ def create_provider_from_env() -> BaseProvider:
     return OpenAIProvider(
         api_key=os.environ.get("OPENAI_API_KEY"),
         # base_url=os.environ.get("OPENAI_BASE_URL"),
-        model=os.environ.get("OPENAI_MODEL", "gpt-5")
+        model_2stage=os.environ.get("OPENAI_MODEL_2STAGE","gpt-4o-mini-2024-07-18"),
+        model_3stage=os.environ.get("OPENAI_MODEL_3STAGE","gpt-5-mini-2025-08-07")
     )

@@ -6,7 +6,7 @@ import json
 from typing import List, Optional
 from pathlib import Path
 from loguru import logger
-from app.models.document import Document, Page, TableInfo, ChartInfo
+from app.models.document import Document, Page, TableInfo, ChartInfo, Partition
 from app.providers.base import BaseProvider
 
 
@@ -162,18 +162,134 @@ class VisionAnalysisService:
             total_tables = sum(len(p.tables) for p in pages_to_analyze)
             total_charts = sum(len(p.charts) for p in pages_to_analyze)
             document.summary = f"Document with {len(pages_to_analyze)} pages analyzed. Contains {total_tables} tables and {total_charts} charts."
-            
+
+            # Create partitions for large documents (>20 pages)
+            if document.is_large_document():
+                logger.info(f"Creating partitions for large document ({document.page_count} pages)")
+                await self._create_partitions(document)
+
             # Save complete metadata to JSON
             self._save_document_metadata(document)
-            
+
             logger.info(f"Document analysis complete for: {document.name}")
             logger.info(f"Total: {len(pages_to_analyze)} pages, {total_tables} tables, {total_charts} charts")
-            
+
             return document
 
         except Exception as e:
             logger.error(f"Failed to analyze document {document.id}: {e}")
             raise
+
+    async def _create_partitions(self, document: Document, num_partitions: int = 5) -> None:
+        """
+        Create partition summaries for large documents.
+        Divides document into equal partitions and generates summary for each.
+
+        Args:
+            document: Document with analyzed pages
+            num_partitions: Number of partitions to create (default: 5)
+        """
+        try:
+            logger.info(f"Creating {num_partitions} partitions for {document.page_count} pages")
+
+            # Calculate partition boundaries
+            pages_per_partition = document.page_count / num_partitions
+            partitions = []
+
+            for i in range(num_partitions):
+                start_page = int(i * pages_per_partition) + 1
+                end_page = int((i + 1) * pages_per_partition) if i < num_partitions - 1 else document.page_count
+
+                # Get pages in this partition
+                partition_pages = [p for p in document.pages if start_page <= p.page_number <= end_page]
+
+                # Create partition summary from page summaries
+                partition_summary = await self._summarize_partition(
+                    partition_id=i + 1,
+                    pages=partition_pages,
+                    document_name=document.name
+                )
+
+                partition = Partition(
+                    partition_id=i + 1,
+                    page_range=(start_page, end_page),
+                    summary=partition_summary
+                )
+                partitions.append(partition)
+
+                logger.info(f"Partition {i+1}: Pages {start_page}-{end_page} ({len(partition_pages)} pages)")
+
+            document.partitions = partitions
+            logger.info(f"Created {len(partitions)} partitions successfully")
+
+        except Exception as e:
+            logger.error(f"Failed to create partitions: {e}")
+            # Don't fail the entire analysis if partition creation fails
+            document.partitions = []
+
+    async def _summarize_partition(
+        self,
+        partition_id: int,
+        pages: List[Page],
+        document_name: str
+    ) -> str:
+        """
+        Generate a summary for a partition based on its page summaries.
+        Uses text-only LLM (cheap) to synthesize page summaries.
+
+        Args:
+            partition_id: Partition number
+            pages: List of pages in this partition
+            document_name: Name of the document
+
+        Returns:
+            Summary text for the partition
+        """
+        try:
+            # Build context from page summaries
+            page_summaries = []
+            for page in pages:
+                summary = page.summary or "No summary available"
+                page_summaries.append(f"Page {page.page_number}: {summary}")
+
+            pages_context = "\n".join(page_summaries)
+
+            prompt = f"""You are analyzing partition {partition_id} of the document "{document_name}".
+
+This partition contains pages {pages[0].page_number} to {pages[-1].page_number}.
+
+Page summaries:
+{pages_context}
+
+Task: Create a concise summary (2-3 sentences) of what this partition covers.
+Focus on the main topics, themes, or sections discussed in these pages.
+
+Partition summary:"""
+
+            messages = [
+                {
+                    "role": "system",
+                    "content": "You are an expert document analyst. Create concise partition summaries from page summaries."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+
+            summary = await self.provider.process_text_messages(
+                messages=messages,
+                max_tokens=200
+            )
+
+            cost = self.provider.get_last_cost() or 0.0
+            logger.debug(f"Partition {partition_id} summarized (cost: ${cost:.4f})")
+
+            return summary.strip()
+
+        except Exception as e:
+            logger.error(f"Failed to summarize partition {partition_id}: {e}")
+            return f"Partition {partition_id} covering pages {pages[0].page_number}-{pages[-1].page_number}"
 
     def _build_analysis_prompt(self, context: str = "") -> str:
         """Condensed prompt for faster processing with multi-page content awareness"""
