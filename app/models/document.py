@@ -67,6 +67,7 @@ class Page:
     width: Optional[int] = None
     height: Optional[int] = None
     summary: str = ""
+    partition_id: Optional[int] = None  # Link to partition (for large documents >20 pages)
     tables: List[TableInfo] = field(default_factory=list)
     charts: List[ChartInfo] = field(default_factory=list)
 
@@ -77,6 +78,7 @@ class Page:
             "summary": self.summary,
             "width": self.width,
             "height": self.height,
+            "partition_id": self.partition_id,
             "tables": [t.to_dict() for t in self.tables],
             "charts": [c.to_dict() for c in self.charts]
         }
@@ -89,6 +91,7 @@ class Page:
             width=data.get("width"),
             height=data.get("height"),
             summary=data.get("summary", ""),
+            partition_id=data.get("partition_id"),
             tables=[TableInfo.from_dict(t) for t in data.get("tables", [])],
             charts=[ChartInfo.from_dict(c) for c in data.get("charts", [])]
         )
@@ -135,6 +138,119 @@ class Partition:
     def get_page_count(self) -> int:
         """Get number of pages in this partition"""
         return self.page_range[1] - self.page_range[0] + 1
+
+
+@dataclass
+class TableInfoWithPage:
+    """Table information with page number for partition_details.json"""
+    table_id: str
+    page_number: int
+    title: str
+    summary: str
+
+    def to_dict(self) -> dict:
+        return {
+            "table_id": self.table_id,
+            "page_number": self.page_number,
+            "title": self.title,
+            "summary": self.summary
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'TableInfoWithPage':
+        return cls(
+            table_id=data["table_id"],
+            page_number=data["page_number"],
+            title=data["title"],
+            summary=data["summary"]
+        )
+
+
+@dataclass
+class ChartInfoWithPage:
+    """Chart information with page number for partition_details.json"""
+    chart_id: str
+    page_number: int
+    title: str
+    chart_type: str
+    summary: str
+
+    def to_dict(self) -> dict:
+        return {
+            "chart_id": self.chart_id,
+            "page_number": self.page_number,
+            "title": self.title,
+            "chart_type": self.chart_type,
+            "summary": self.summary
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'ChartInfoWithPage':
+        return cls(
+            chart_id=data["chart_id"],
+            page_number=data["page_number"],
+            title=data["title"],
+            chart_type=data["chart_type"],
+            summary=data["summary"]
+        )
+
+
+@dataclass
+class PartitionDetail:
+    """Detailed partition information with aggregated tables and charts"""
+    partition_id: int
+    page_range: tuple  # (start_page, end_page) inclusive
+    page_count: int
+    summary: str
+    tables: List[TableInfoWithPage] = field(default_factory=list)
+    charts: List[ChartInfoWithPage] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "partition_id": self.partition_id,
+            "page_range": list(self.page_range),
+            "page_count": self.page_count,
+            "summary": self.summary,
+            "tables": [t.to_dict() for t in self.tables],
+            "charts": [c.to_dict() for c in self.charts]
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'PartitionDetail':
+        return cls(
+            partition_id=data["partition_id"],
+            page_range=tuple(data["page_range"]),
+            page_count=data["page_count"],
+            summary=data["summary"],
+            tables=[TableInfoWithPage.from_dict(t) for t in data.get("tables", [])],
+            charts=[ChartInfoWithPage.from_dict(c) for c in data.get("charts", [])]
+        )
+
+
+@dataclass
+class PartitionDetails:
+    """Container for partition_details.json file structure"""
+    document_id: str
+    document_name: str
+    total_partitions: int
+    partitions: List[PartitionDetail] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "document_id": self.document_id,
+            "document_name": self.document_name,
+            "total_partitions": self.total_partitions,
+            "partitions": [p.to_dict() for p in self.partitions]
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'PartitionDetails':
+        return cls(
+            document_id=data["document_id"],
+            document_name=data["document_name"],
+            total_partitions=data["total_partitions"],
+            partitions=[PartitionDetail.from_dict(p) for p in data.get("partitions", [])]
+        )
 
 
 @dataclass

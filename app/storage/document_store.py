@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List, Optional, Dict
 from loguru import logger
 
-from app.models.document import Document, DocumentStatus
+from app.models.document import Document, DocumentStatus, PartitionDetails
 from .base import BaseStorage
 
 
@@ -194,3 +194,51 @@ class DocumentStore(BaseStorage):
         except Exception as e:
             logger.error(f"Failed to load summary: {e}")
             return None
+
+    def load_partition_details(self, doc_id: str) -> Optional[PartitionDetails]:
+        """
+        Load partition_details.json for a large document
+
+        Args:
+            doc_id: Document ID
+
+        Returns:
+            PartitionDetails object or None if not found
+        """
+        partition_details_path = self.documents_dir / doc_id / "partition_details.json"
+
+        if not partition_details_path.exists():
+            logger.debug(f"partition_details.json not found for document: {doc_id}")
+            return None
+
+        try:
+            with open(partition_details_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return PartitionDetails.from_dict(data)
+        except Exception as e:
+            logger.error(f"Failed to load partition_details for {doc_id}: {e}")
+            return None
+
+    def save_partition_details(self, partition_details: PartitionDetails) -> bool:
+        """
+        Save partition_details.json for a large document
+
+        Args:
+            partition_details: PartitionDetails object to save
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            doc_dir = self.documents_dir / partition_details.document_id
+            doc_dir.mkdir(parents=True, exist_ok=True)
+
+            partition_details_path = doc_dir / "partition_details.json"
+            with open(partition_details_path, "w", encoding="utf-8") as f:
+                json.dump(partition_details.to_dict(), f, indent=2, ensure_ascii=False)
+
+            logger.info(f"Saved partition_details for document: {partition_details.document_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save partition_details: {e}")
+            return False

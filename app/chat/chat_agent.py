@@ -65,9 +65,9 @@ class ChatAgent:
             logger.info(f"Answering question: {question}")
             logger.info(f"Document: {document.name} ({document.page_count} pages)")
 
-            # Conditional flow based on document size
-            if document.is_large_document() and document.has_partitions() and not use_all_pages:
-                # 3-STAGE HIERARCHICAL FLOW for large documents (>20 pages)
+            
+            if document.is_large_document():
+
                 logger.info("Using 3-stage hierarchical flow (large document)")
                 selected_pages, partition_cost, selection_cost, selected_partitions = await self._three_stage_selection(
                     document=document,
@@ -104,7 +104,7 @@ class ChatAgent:
 
             # Final stage: Analyze selected pages with vision to answer question
             # Use model based on flow: 2-stage uses gpt-4o-mini, 3-stage uses gpt-5
-            model_for_vision = self.provider.get_model_3stage() if (document.is_large_document() and document.has_partitions()) else self.provider.get_model_2stage()
+            model_for_vision = self.provider.get_model_3stage() if document.is_large_document() else self.provider.get_model_2stage()            
             logger.info(f"Analyzing {len(selected_pages)} selected pages with vision model {model_for_vision}...")
             answer = await self._analyze_pages_for_answer(
                 pages=selected_pages,
@@ -181,34 +181,42 @@ class ChatAgent:
         Returns:
             tuple: (selected_pages, partition_cost, selection_cost, selected_partitions)
         """
-        # Stage 1: Select 1-2 relevant partitions using gpt-5
-        logger.info(f"Stage 1/3: Selecting relevant partitions using {self.provider.get_model_3stage()}...")
-        selected_partitions = await self.partition_selector.select_relevant_partitions(
-            document=document,
-            user_question=question,
-            max_partitions=2,
-            model=self.provider.get_model_3stage()  # Use gpt-5 for 3-stage
-        )
-        partition_cost = self.provider.get_last_cost() or 0.0
+        # Stage 1: Select 1-2 relevant partitions using gpt-5 (if partitions exist)
+        if document.has_partitions():
+            logger.info(f"Stage 1/3: Selecting relevant partitions using {self.provider.get_model_3stage()}...")
+            selected_partitions = await self.partition_selector.select_relevant_partitions(
+                document=document,
+                user_question=question,
+                max_partitions=2,
+                model=self.provider.get_model_3stage()
+            )
+            partition_cost = self.provider.get_last_cost() or 0.0
 
-        if not selected_partitions:
-            logger.warning("No partitions selected, falling back to first partition")
-            selected_partitions = document.partitions[:1] if document.partitions else []
+            if not selected_partitions:
+                logger.warning("No partitions selected, falling back to first partition")
+                selected_partitions = document.partitions[:1] if document.partitions else []
 
-        # Log selected partitions
-        for partition in selected_partitions:
-            logger.info(f"  Selected Partition {partition.partition_id}: Pages {partition.page_range[0]}-{partition.page_range[1]}")
+            # Log selected partitions
+            for partition in selected_partitions:
+                logger.info(f"  Selected Partition {partition.partition_id}: Pages {partition.page_range[0]}-{partition.page_range[1]}")
+        else:
+            logger.warning("Document has no partitions, skipping partition selection stage")
+            selected_partitions = []
+            partition_cost = 0.0
 
-        # Stage 2: Select 2-5 pages from selected partitions using gpt-5
+        # Stage 2: Select 2-5 relevant pages from selected partitions using gpt-5
         logger.info(f"Stage 2/3: Selecting relevant pages using {self.provider.get_model_3stage()}...")
         selected_pages = await self.page_selector.select_relevant_pages(
             document=document,
             user_question=question,
-            max_pages=max_pages or 5,  # Default to 5 pages for large documents
-            partitions=selected_partitions,
-            model=self.provider.get_model_3stage()  # Use gpt-5 for 3-stage
+            max_pages=max_pages,
+            partitions=selected_partitions if selected_partitions else None,
+            model=self.provider.get_model_3stage()
         )
         selection_cost = self.provider.get_last_cost() or 0.0
+
+        # Log selected pages
+        logger.info(f"  Selected {len(selected_pages)} pages: {[p.page_number for p in selected_pages]}")
 
         return selected_pages, partition_cost, selection_cost, selected_partitions
 

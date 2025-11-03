@@ -105,7 +105,8 @@ class PageSelector:
 
     def _filter_pages_by_partitions(self, document: Document, partitions: List[Partition]) -> List[Page]:
         """
-        Filter pages to only include those within the given partitions
+        Filter pages to only include those within the given partitions.
+        Uses partition_id field on pages if available, otherwise falls back to page_range.
 
         Args:
             document: Document with all pages
@@ -117,12 +118,21 @@ class PageSelector:
         if not partitions:
             return document.pages
 
+        # Get partition IDs
+        partition_ids = [p.partition_id for p in partitions]
+
         filtered_pages = []
-        for partition in partitions:
-            start_page, end_page = partition.page_range
-            for page in document.pages:
-                if start_page <= page.page_number <= end_page:
-                    filtered_pages.append(page)
+        for page in document.pages:
+            # Method 1: Direct partition_id match (preferred for large documents)
+            if page.partition_id is not None and page.partition_id in partition_ids:
+                filtered_pages.append(page)
+            # Method 2: Fallback to page_range matching (for backward compatibility)
+            elif page.partition_id is None:
+                for partition in partitions:
+                    start_page, end_page = partition.page_range
+                    if start_page <= page.page_number <= end_page:
+                        filtered_pages.append(page)
+                        break
 
         return filtered_pages
 

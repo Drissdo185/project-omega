@@ -6,7 +6,7 @@ import json
 from typing import List, Optional
 from pathlib import Path
 from loguru import logger
-from app.models.document import Document, Page, TableInfo, ChartInfo, Partition
+from app.models.document import Document, Page, TableInfo, ChartInfo, Partition, PartitionDetails, PartitionDetail, TableInfoWithPage, ChartInfoWithPage
 from app.providers.base import BaseProvider
 
 
@@ -36,7 +36,8 @@ class VisionAnalysisService:
     async def analyze_page(
         self,
         page: Page,
-        context: str = ""
+        context: str = "",
+        model: Optional[str] = None
     ) -> dict:
         """
         Analyze a single page using vision model and return structured data
@@ -44,6 +45,7 @@ class VisionAnalysisService:
         Args:
             page: Page object with image path
             context: Optional context about the document
+            model: Optional model to use (if None, uses default from provider)
 
         Returns:
             dict: Contains summary, tables, and charts
@@ -73,6 +75,7 @@ class VisionAnalysisService:
             response = await self.provider.process_multimodal_messages(
                 messages=messages,
                 max_tokens=1000,
+                model=model
             )
 
             # Parse the response to get structured data
@@ -111,16 +114,21 @@ class VisionAnalysisService:
         """
         try:
             logger.info(f"Starting analysis of document: {document.name} ({document.page_count} pages)")
-            
+
+            # Determine model based on document size
+            # Large documents (>20 pages) use 3-stage model, small documents use 2-stage model
+            model_for_analysis = self.provider.get_model_3stage() if document.is_large_document() else self.provider.get_model_2stage()
+            logger.info(f"Using model {model_for_analysis} for document analysis (is_large: {document.is_large_document()})")
+
             pages_to_analyze = document.pages[:max_pages] if max_pages else document.pages
-            
+
             # Process pages concurrently in batches
             import asyncio
-            
+
             async def analyze_single_page(page: Page):
                 """Analyze a single page and update it with results"""
                 context = f"This is page {page.page_number} of {document.page_count} from '{document.name}'"
-                page_data = await self.analyze_page(page, context)
+                page_data = await self.analyze_page(page, context, model=model_for_analysis)
                 
                 # Update page with results
                 page.summary = page_data.get("summary", "")
@@ -168,6 +176,10 @@ class VisionAnalysisService:
                 logger.info(f"Creating partitions for large document ({document.page_count} pages)")
                 await self._create_partitions(document)
 
+                # Create and save partition_details.json
+                partition_details = self._create_partition_details(document)
+                self._save_partition_details(partition_details, document.id)
+
             # Save complete metadata to JSON
             self._save_document_metadata(document)
 
@@ -184,6 +196,7 @@ class VisionAnalysisService:
         """
         Create partition summaries for large documents.
         Divides document into equal partitions and generates summary for each.
+        Also assigns partition_id to each page.
 
         Args:
             document: Document with analyzed pages
@@ -199,28 +212,34 @@ class VisionAnalysisService:
             for i in range(num_partitions):
                 start_page = int(i * pages_per_partition) + 1
                 end_page = int((i + 1) * pages_per_partition) if i < num_partitions - 1 else document.page_count
+                partition_id = i + 1
 
-                # Get pages in this partition
-                partition_pages = [p for p in document.pages if start_page <= p.page_number <= end_page]
+                # Get pages in this partition and assign partition_id
+                partition_pages = []
+                for page in document.pages:
+                    if start_page <= page.page_number <= end_page:
+                        page.partition_id = partition_id  # Assign partition_id to page
+                        partition_pages.append(page)
 
                 # Create partition summary from page summaries
                 partition_summary = await self._summarize_partition(
-                    partition_id=i + 1,
+                    partition_id=partition_id,
                     pages=partition_pages,
                     document_name=document.name
                 )
 
                 partition = Partition(
-                    partition_id=i + 1,
+                    partition_id=partition_id,
                     page_range=(start_page, end_page),
                     summary=partition_summary
                 )
                 partitions.append(partition)
 
-                logger.info(f"Partition {i+1}: Pages {start_page}-{end_page} ({len(partition_pages)} pages)")
+                logger.info(f"Partition {partition_id}: Pages {start_page}-{end_page} ({len(partition_pages)} pages)")
 
             document.partitions = partitions
             logger.info(f"Created {len(partitions)} partitions successfully")
+            logger.info(f"Assigned partition_id to all {document.page_count} pages")
 
         except Exception as e:
             logger.error(f"Failed to create partitions: {e}")
@@ -290,6 +309,92 @@ Partition summary:"""
         except Exception as e:
             logger.error(f"Failed to summarize partition {partition_id}: {e}")
             return f"Partition {partition_id} covering pages {pages[0].page_number}-{pages[-1].page_number}"
+
+    def _create_partition_details(self, document: Document) -> PartitionDetails:
+        """
+        Create PartitionDetails object by aggregating tables and charts from partition pages.
+
+        Args:
+            document: Document with partitions and analyzed pages
+
+        Returns:
+            PartitionDetails object for partition_details.json
+        """
+        partition_detail_list = []
+
+        for partition in document.partitions:
+            start_page, end_page = partition.page_range
+
+            # Get all pages in this partition
+            partition_pages = [p for p in document.pages if start_page <= p.page_number <= end_page]
+
+            # Aggregate all tables from partition pages
+            tables_with_page = []
+            for page in partition_pages:
+                for table in page.tables:
+                    tables_with_page.append(TableInfoWithPage(
+                        table_id=table.table_id,
+                        page_number=page.page_number,
+                        title=table.title,
+                        summary=table.summary
+                    ))
+
+            # Aggregate all charts from partition pages
+            charts_with_page = []
+            for page in partition_pages:
+                for chart in page.charts:
+                    charts_with_page.append(ChartInfoWithPage(
+                        chart_id=chart.chart_id,
+                        page_number=page.page_number,
+                        title=chart.title,
+                        chart_type=chart.chart_type,
+                        summary=chart.summary
+                    ))
+
+            # Create PartitionDetail
+            partition_detail = PartitionDetail(
+                partition_id=partition.partition_id,
+                page_range=partition.page_range,
+                page_count=partition.get_page_count(),
+                summary=partition.summary,
+                tables=tables_with_page,
+                charts=charts_with_page
+            )
+            partition_detail_list.append(partition_detail)
+
+            logger.debug(f"Partition {partition.partition_id}: {len(tables_with_page)} tables, {len(charts_with_page)} charts")
+
+        # Create PartitionDetails container
+        partition_details = PartitionDetails(
+            document_id=document.id,
+            document_name=document.name,
+            total_partitions=len(document.partitions),
+            partitions=partition_detail_list
+        )
+
+        logger.info(f"Created partition_details for {len(partition_detail_list)} partitions")
+        return partition_details
+
+    def _save_partition_details(self, partition_details: PartitionDetails, document_id: str):
+        """
+        Save partition_details.json file
+
+        Args:
+            partition_details: PartitionDetails object
+            document_id: Document ID for path
+        """
+        try:
+            doc_dir = self.documents_dir / document_id
+            doc_dir.mkdir(parents=True, exist_ok=True)
+            output_path = doc_dir / "partition_details.json"
+
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(partition_details.to_dict(), f, indent=2, ensure_ascii=False)
+
+            logger.info(f"Saved partition_details to: {output_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to save partition_details: {e}")
 
     def _build_analysis_prompt(self, context: str = "") -> str:
         """Condensed prompt for faster processing with multi-page content awareness"""
@@ -379,12 +484,17 @@ Partition summary:"""
             }
 
     def _save_document_metadata(self, document: Document):
-        """Save document metadata to metadata.json file"""
+        """
+        Save document metadata to metadata.json file.
+        Note: partitions array is NOT included in metadata.json for large documents.
+        Partition data is stored separately in partition_details.json.
+        """
         try:
             doc_dir = self.documents_dir / document.id
             doc_dir.mkdir(parents=True, exist_ok=True)
             output_path = doc_dir / "metadata.json"
 
+            # Pages will include partition_id field (for large documents)
             metadata = {
                 "id": document.id,
                 "name": document.name,
