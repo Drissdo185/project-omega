@@ -1,4 +1,3 @@
-# app/models/document.py
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -260,7 +259,7 @@ class Document:
     name: str
     page_count: int
     pages: List[Page] = field(default_factory=list)
-    partitions: List[Partition] = field(default_factory=list)  # For large documents (>20 pages)
+    partitions: List[Partition] = field(default_factory=list)
     status: DocumentStatus = DocumentStatus.PROCESSING
     summary: Optional[str] = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
