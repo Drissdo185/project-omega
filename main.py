@@ -11,11 +11,11 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
 from loguru import logger
-from vision_pdf_processor import VisionPDFProcessor
-from vision_analyzer import VisionAnalyzer
-from openai_client import OpenAIClient
-from page_selection_agent import PageSelectionAgent
-from document import Document
+from app.processors.pdf_to_image import VisionPDFProcessor
+from app.ai.vision_analyzer import VisionAnalyzer
+from app.ai.openai import OpenAIClient
+from app.ai.page import PageSelectionAgent
+from app.processors.document import Document
 
 # Configure logger
 logger.add("app.log", rotation="10 MB")

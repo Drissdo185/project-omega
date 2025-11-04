@@ -141,7 +141,7 @@ class Partition:
 
 @dataclass
 class TableInfoWithPage:
-    """Table information with page number for partition_details.json"""
+    """Table information with page number for partition_summary.json"""
     table_id: str
     page_number: int
     title: str
@@ -167,7 +167,7 @@ class TableInfoWithPage:
 
 @dataclass
 class ChartInfoWithPage:
-    """Chart information with page number for partition_details.json"""
+    """Chart information with page number for partition_summary.json"""
     chart_id: str
     page_number: int
     title: str
@@ -228,7 +228,7 @@ class PartitionDetail:
 
 @dataclass
 class PartitionDetails:
-    """Container for partition_details.json file structure"""
+    """Container for partition_summary.json file structure"""
     document_id: str
     document_name: str
     total_partitions: int

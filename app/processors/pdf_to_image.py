@@ -134,7 +134,7 @@ class VisionPDFProcessor:
         doc_dir: Path
     ) -> None:
         """
-        Tạo và lưu partition_details.json cho tài liệu lớn
+        Tạo và lưu partition_summary.json cho tài liệu lớn
         
         Args:
             document: Document object
@@ -195,7 +195,7 @@ class VisionPDFProcessor:
         )
         
         # Lưu file
-        details_path = doc_dir / "partition_details.json"
+        details_path = doc_dir / "partition_summary.json"
         with open(details_path, 'w', encoding='utf-8') as f:
             json.dump(partition_details.to_dict(), f, indent=2, ensure_ascii=False)
         
