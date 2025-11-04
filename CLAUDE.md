@@ -4,162 +4,172 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **Vision-based RAG (Retrieval-Augmented Generation)** system that processes PDF documents by converting them to images and analyzing them using vision-enabled LLMs. Unlike traditional text-based RAG systems, this approach preserves visual layout, formatting, tables, charts, and other visual elements.
+This is a **Vision-based PDF RAG (Retrieval-Augmented Generation) system** built with Streamlit. It converts PDFs to images and uses OpenAI's vision models to analyze document content, extract tables/charts, and answer questions.
 
-## Architecture
+### Core Architecture
 
-### Core Pipeline
+The system follows a **three-phase processing pipeline**:
 
-1. **PDF Processing** (`app/processor/pdf_vision.py`)
-   - Converts PDF pages to high-quality JPEG images using PyMuPDF (fitz)
-   - Stores images in structured directory: `flex_rag_data_location/documents/{doc_id}/pages/`
-   - Generates unique document IDs and maintains metadata
+1. **PDF → Images**: Convert PDF pages to JPEG images using PyMuPDF (main.py:42-98, app/processors/pdf_to_image.py)
+2. **Vision Analysis**: AI analyzes each page to extract summaries, tables, and charts (app/ai/vision_analyzer.py)
+3. **Question Answering**: Agent selects relevant pages and generates answers (app/ai/page_selection_agent.py)
 
-2. **Vision Analysis** (`app/ai/vision_analysis.py`)
-   - Analyzes document images using vision-capable LLMs
-   - Performs page-level analysis with content extraction, labeling, and topic identification
-   - Aggregates page analyses into document-level summaries
-   - Tracks API costs for each analysis
+### Document Size Strategy
 
-3. **LLM Providers** (`app/providers/`)
-   - Abstract provider interface (`base.py`) supporting both text and multimodal messages
-   - OpenAI-compatible provider implementation (`openai.py`)
-   - Handles base64 image encoding for vision requests
-   - Configurable via environment variables
+The system handles documents differently based on size:
 
-4. **Storage** (`app/storage/document_store.py`)
-   - Manages document metadata and analysis results
-   - Maintains global index at `flex_rag_data_location/documents/index.json`
-   - Stores document metadata and analysis in `{doc_id}/metadata.json`
+**Small Documents (≤20 pages)**:
+- Direct page-level analysis
+- All pages stored in `metadata.json`
+- Q&A selects from all pages directly
 
-### Data Models
+**Large Documents (>20 pages)**:
+- **Auto-partitioning**: Documents divided into partitions of 20 pages each (app/processors/pdf_to_image.py:62-97)
+- **Two-tier metadata**:
+  - `metadata.json` - Full page-level details
+  - `partition_summary.json` - Aggregated partition summaries with tables/charts
+- **Two-step Q&A**: First selects top 2 relevant partitions, then selects specific pages within them (app/ai/page_selection_agent.py:401-448)
 
-- **Document** (`app/models/document.py`): Represents a processed PDF with pages and metadata
-- **Page**: Individual page with image path and dimensions
-- **DocumentAnalysis** (`app/ai/analysis.py`): Complete analysis with category, summary, and page analyses
-- **PageAnalysis**: Per-page analysis with summary, labels, and extracted data
-- **PageLabel**: Content type, topics, language, and confidence metadata
+This partitioning strategy is critical for handling large documents efficiently and staying within token limits.
 
-### Storage Structure
+### Data Model Hierarchy
 
 ```
-flex_rag_data_location/
-├── documents/
-│   ├── index.json                    # Global document index
-│   ├── {doc_id}/
-│   │   ├── metadata.json             # Document + analysis metadata (merged)
-│   │   └── pages/
-│   │       ├── page_1.jpg
-│   │       ├── page_2.jpg
-│   │       └── ...
-└── cache/
-    └── summaries/                    # Cached summaries
+Document
+├── pages: List[Page]
+│   ├── page_number, image_path, summary
+│   ├── partition_id (for large docs)
+│   ├── tables: List[TableInfo]
+│   └── charts: List[ChartInfo]
+└── partitions: List[Partition] (>20 pages only)
+    ├── partition_id
+    ├── page_range: (start, end)
+    └── summary
 ```
 
-## Environment Setup
+See `app/processors/document.py` for complete data model definitions.
 
-### Required Environment Variables
+### Directory Structure
 
-Create a `.env` file with:
+```
+flex_rag_data_location/documents/{doc_id}/
+├── pages/
+│   ├── page_1.jpg
+│   ├── page_2.jpg
+│   └── ...
+├── metadata.json          # Full document metadata with all pages
+└── partition_summary.json # Large docs only: partition-level aggregation
+```
+
+## Development Commands
+
+### Running the Application
 
 ```bash
-OPENAI_API_KEY=your_api_key_here
-OPENAI_BASE_URL=https://aiportalapi.stu-platform.live/use  # Custom endpoint
-OPENAI_MODEL=gpt-5                                          # Default model
-FLEX_RAG_DATA_LOCATION=./flex_rag_data_location           # Data storage root
-```
-
-### Installation
-
-```bash
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
 # Install dependencies
 pip install -r requirements.txt
+
+# Set OpenAI API key
+export OPENAI_API_KEY="your-key-here"
+
+# Run Streamlit app
+streamlit run main.py
 ```
 
-## Common Commands
+### Key Environment Variables
 
-### Run the Main Pipeline
+- `OPENAI_API_KEY` - Required for AI vision analysis and Q&A
+- `FLEX_RAG_DATA_LOCATION` - Data storage location (defaults to `/flex_rag_data_location`)
 
-```bash
-# Activate virtual environment first
-source venv/bin/activate
+## Important Implementation Details
 
-# Run main.py to process a PDF
-python main.py
+### Vision Analyzer (app/ai/vision_analyzer.py)
+
+The `VisionAnalyzer.analyze_document()` method orchestrates the entire analysis:
+
+1. **Step 1**: Analyzes each page individually (`_analyze_single_page`)
+   - Extracts page summary
+   - Detects and summarizes tables
+   - Detects and summarizes charts/graphs
+   - Uses `model_small` (gpt-4o-mini)
+
+2. **Step 2** (large docs only): Analyzes each partition (`_analyze_partition_batch`)
+   - Samples up to 10 pages per partition
+   - Generates partition-level summary
+   - Uses `model_large` (gpt-5-mini) with low detail
+
+3. **Step 3**: Saves `metadata.json`
+
+4. **Step 4** (large docs only): Generates `partition_summary.json`
+
+### Page Selection Agent (app/ai/page_selection_agent.py)
+
+**Small Document Strategy** (`_select_pages_small_doc`):
+- Reviews all page summaries with metadata
+- Selects top 5 most relevant pages
+- Uses `model_small`
+
+**Large Document Strategy** (`_select_pages_large_doc`):
+- **Phase 1**: Select top 2 partitions from `partition_summary.json` (`_select_partitions_from_summary`)
+  - Uses partition summaries + aggregated table/chart metadata
+  - Uses `model_large`
+- **Phase 2**: Select top 5 pages within chosen partitions (`_select_pages_within_partitions`)
+  - Uses page summaries + metadata
+  - Uses `model_large`
+
+This two-phase approach is essential for scaling to large documents.
+
+### Model Selection (app/ai/openai.py)
+
+```python
+model_small = "gpt-4o-mini-2024-07-18"  # ≤20 pages
+model_large = "gpt-5-mini-2025-08-07"   # >20 pages
 ```
 
-Note: Edit `main.py` to change the PDF file path (line 14).
+The system uses different models based on document complexity.
 
-### Install Dependencies
+## Code Organization
 
-```bash
-pip install -r requirements.txt
-```
+- **main.py** - Streamlit UI and orchestration
+- **app/processors/** - PDF processing and document data models
+  - `pdf_to_image.py` - PDF → image conversion with auto-partitioning
+  - `document.py` - All data classes (Document, Page, Partition, TableInfo, ChartInfo, etc.)
+- **app/ai/** - AI vision analysis and Q&A
+  - `openai.py` - OpenAI client wrapper
+  - `vision_analyzer.py` - Vision-based page/partition analysis
+  - `page_selection_agent.py` - Intelligent page selection and Q&A
 
-### Add New Dependencies
+## Common Workflows
 
-```bash
-pip install <package>
-pip freeze > requirements.txt
-```
+### Adding a New Feature to Analysis
 
-## Key Design Decisions
+1. Update data model in `app/processors/document.py` if needed
+2. Modify vision prompt in `app/ai/vision_analyzer.py:_analyze_single_page`
+3. Update JSON parsing to handle new fields
+4. Ensure `to_dict()`/`from_dict()` methods support new fields
 
-### Vision-First Approach
+### Changing Partition Size
 
-- **No text extraction**: PDFs are converted directly to images without OCR or text extraction
-- **Preserves visual context**: Tables, charts, formatting, and layout are maintained
-- **Multimodal analysis**: LLMs analyze images directly using vision capabilities
+Modify `partition_size` parameter in `VisionPDFProcessor.__init__()` (currently 20 pages). This affects:
+- Partition creation logic
+- `partition_summary.json` structure
+- Page selection agent behavior
 
-### Metadata Storage
+### Modifying Q&A Strategy
 
-- Analysis results are merged into the document's `metadata.json` file (not separate files)
-- This keeps document metadata and analysis together in a single source of truth
-- The `VisionAnalysisService._save_analysis()` method merges analysis fields with existing metadata
+Edit `PageSelectionAgent` methods:
+- Adjust `max_pages_to_analyze` (currently 5)
+- Adjust `max_partitions` (currently 2)
+- Modify selection prompts for different ranking criteria
 
-### Provider Abstraction
+## Current Git Status
 
-- `BaseProvider` interface allows swapping LLM providers
-- Currently implements OpenAI-compatible endpoints
-- Supports custom base URLs for alternative API endpoints
-- Handles both text-only and multimodal (vision) requests
+Branch: `feature/summary_agent`
 
-### Cost Tracking
+Modified files:
+- `app/ai/vision_analyzer.py` - Vision analysis implementation
+- `app/processors/pdf_to_image.py` - PDF processor with partitioning
+- `main.py` - Streamlit UI updates
+- `app/__init__.py` - New file
 
-- Each API call's token usage is tracked
-- Costs are calculated based on GPT-5 pricing (configurable in `openai.py:162-172`)
-- Total analysis cost is stored in document metadata
-
-## Important File Locations
-
-- Entry point: `main.py`
-- PDF processor: `app/processor/pdf_vision.py:89` (process method)
-- Vision analysis: `app/ai/vision_analysis.py:121` (analyze_document method)
-- Provider factory: `app/providers/factory.py:39` (create_provider_from_env)
-- Document storage: `app/storage/document_store.py`
-- Data models: `app/models/document.py` and `app/ai/analysis.py`
-
-## Development Notes
-
-### Processing Configuration
-
-Default settings in `VisionPDFProcessor.__init__()`:
-- `render_scale: 2.0` - High-quality rendering
-- `jpeg_quality: 90` - Optimized compression
-- `max_image_size: (1400, 1400)` - Max dimensions for LLM vision
-
-### Analysis Prompts
-
-Vision analysis prompts are built in:
-- `VisionAnalysisService._build_detailed_analysis_prompt()` - Full analysis
-- `VisionAnalysisService._build_quick_analysis_prompt()` - Quick summary
-
-### Adding New Document Processors
-
-1. Inherit from `BaseProcessor` (`app/processor/base.py`)
-2. Implement `process(file_path)` and `supports(file_path)` methods
-3. Register in `app/processor/factory.py` (if using factory pattern)
+Recent focus: Building partition-level summarization for large documents.
