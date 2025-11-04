@@ -8,7 +8,7 @@ from typing import Optional, List
 from datetime import datetime, timezone
 from loguru import logger
 
-from document import (
+from app.processors.document import (
     Document,
     Page,
     DocumentStatus,
@@ -33,7 +33,7 @@ class VisionPDFProcessor:
         partition_overlap: int = 0  # Số trang overlap giữa các partition (nếu cần)
     ):
         if storage_root is None:
-            storage_root = os.environ.get("FLEX_RAG_DATA_LOCATION", "../../flex_rag_data_location")
+            storage_root = os.environ.get("FLEX_RAG_DATA_LOCATION", "/flex_rag_data_location")
     
         self.storage_root = Path(storage_root)
         self.render_scale = render_scale

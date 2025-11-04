@@ -1,4 +1,4 @@
-# ai/main.py
+# main.py
 import streamlit as st
 import asyncio
 import os
@@ -6,15 +6,20 @@ import json
 from pathlib import Path
 from datetime import datetime
 import sys
+from dotenv import load_dotenv
 
-# Add parent directory to path
-sys.path.append(str(Path(__file__).parent.parent))
+# Load environment variables from .env file
+load_dotenv()
+
+# Add the app directory to Python path
+app_dir = Path(__file__).parent / "app"
+sys.path.insert(0, str(app_dir))
 
 from loguru import logger
 from app.processors.pdf_to_image import VisionPDFProcessor
 from app.ai.vision_analyzer import VisionAnalyzer
 from app.ai.openai import OpenAIClient
-from app.ai.page import PageSelectionAgent
+from app.ai.page_selection_agent import PageSelectionAgent
 from app.processors.document import Document
 
 # Configure logger
@@ -173,27 +178,26 @@ def main():
     st.title("📄 PDF AI Assistant")
     st.markdown("Upload a PDF, process it with AI, and ask questions about its content.")
     
+    # Get API key from environment
+    openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+
     # Sidebar - Configuration
     with st.sidebar:
         st.header("⚙️ Configuration")
-        
-        openai_api_key = st.text_input(
-            "OpenAI API Key",
-            type="password",
-            value=os.environ.get("OPENAI_API_KEY", ""),
-            help="Enter your OpenAI API key"
-        )
-        
-        if not openai_api_key:
-            st.warning("⚠️ Please enter your OpenAI API key to continue")
-        
+
+        if openai_api_key:
+            st.success("✅ OpenAI API Key loaded")
+        else:
+            st.error("❌ OPENAI_API_KEY not found")
+            st.info("Set OPENAI_API_KEY in .env file")
+
         st.divider()
-        
+
         # Current document info
         if st.session_state.document:
             st.header("📄 Current Document")
             st.success(f"✅ {st.session_state.document.name}")
-            
+
             if st.button("🗑️ Clear Document"):
                 st.session_state.document = None
                 st.session_state.chat_history = []
@@ -205,30 +209,53 @@ def main():
     if not st.session_state.document:
         # Upload section
         st.header("1️⃣ Upload PDF Document")
-        
+
         uploaded_file = st.file_uploader(
             "Choose a PDF file",
             type=["pdf"],
             help="Upload a PDF document to analyze"
         )
-        
-        if uploaded_file and openai_api_key:
-            if st.button("🚀 Process Document", type="primary", disabled=st.session_state.processing):
-                st.session_state.processing = True
-                
-                try:
-                    # Process PDF
-                    document = asyncio.run(process_pdf(uploaded_file, openai_api_key))
-                    st.session_state.document = document
-                    st.session_state.processing = False
-                    
-                    st.success("✅ Document processed successfully!")
-                    st.rerun()
-                
-                except Exception as e:
-                    st.error(f"❌ Error processing document: {str(e)}")
-                    logger.error(f"Processing error: {e}")
-                    st.session_state.processing = False
+
+        st.divider()
+
+        # Show process button section
+        if uploaded_file:
+            st.subheader("2️⃣ Process Document")
+
+            if not openai_api_key:
+                st.error("❌ OPENAI_API_KEY not found in environment")
+                st.info("Please set your OPENAI_API_KEY environment variable before running the app")
+            else:
+                st.info(f"📄 Ready to process: **{uploaded_file.name}**")
+
+                col1, col2, col3 = st.columns([1, 2, 1])
+                with col2:
+                    if st.button(
+                        "🚀 Process Document with AI",
+                        type="primary",
+                        disabled=st.session_state.processing or not openai_api_key,
+                        use_container_width=True
+                    ):
+                        st.session_state.processing = True
+
+                        try:
+                            # Process PDF
+                            document = asyncio.run(process_pdf(uploaded_file, openai_api_key))
+                            st.session_state.document = document
+                            st.session_state.processing = False
+
+                            st.success("✅ Document processed successfully!")
+                            st.rerun()
+
+                        except Exception as e:
+                            st.error(f"❌ Error processing document: {str(e)}")
+                            logger.error(f"Processing error: {e}")
+                            st.session_state.processing = False
+
+                if st.session_state.processing:
+                    st.warning("⏳ Processing in progress... Please wait.")
+        else:
+            st.info("👆 Please upload a PDF file to get started")
     
     else:
         # Document loaded - Show Q&A interface
@@ -253,10 +280,6 @@ def main():
         
         # Chat input
         if question := st.chat_input("Ask a question about the document..."):
-            if not openai_api_key:
-                st.error("⚠️ Please enter your OpenAI API key in the sidebar")
-                return
-            
             # Add user message to chat
             st.session_state.chat_history.append({
                 "role": "user",

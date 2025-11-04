@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 from loguru import logger
 
-from processors.document import Document, Page, Partition
-from openai import OpenAIClient
+from app.processors.document import Document, Page, Partition
+from app.ai.openai import OpenAIClient
 
 
 class PageSelectionAgent:
@@ -22,7 +22,7 @@ class PageSelectionAgent:
         
         if storage_root is None:
             import os
-            storage_root = os.environ.get("FLEX_RAG_DATA_LOCATION", "../../flex_rag_data_location")
+            storage_root = os.environ.get("FLEX_RAG_DATA_LOCATION", "/flex_rag_data_location")
         
         self.storage_root = Path(storage_root)
         self.documents_dir = self.storage_root / "documents"
@@ -133,7 +133,7 @@ Return ONLY valid JSON:
             response = await self.client.chat_completion(
                 messages=[{"role": "user", "content": prompt}],
                 model=self.client.model_large,
-                max_tokens=500,
+                max_completion_tokens=500,
                 temperature=0.2
             )
             
@@ -257,7 +257,7 @@ Return ONLY valid JSON:
             response = await self.client.chat_completion(
                 messages=[{"role": "user", "content": prompt}],
                 model=self.client.model_large,
-                max_tokens=600,
+                max_completion_tokens=600,
                 temperature=0.2
             )
             
@@ -360,7 +360,7 @@ Return ONLY valid JSON:
             response = await self.client.chat_completion(
                 messages=[{"role": "user", "content": prompt}],
                 model=self.client.model_small,
-                max_tokens=500,
+                max_completion_tokens=500,
                 temperature=0.2
             )
             
@@ -488,7 +488,7 @@ Return ONLY valid JSON:
             response = await self.client.chat_completion(
                 messages=[{"role": "user", "content": prompt}],
                 model=self.client.model_large,
-                max_tokens=300
+                max_completion_tokens=300
             )
             
             content = response.strip()
@@ -548,7 +548,7 @@ Return ONLY valid JSON:
             response = await self.client.chat_completion(
                 messages=[{"role": "user", "content": prompt}],
                 model=self.client.model_large,
-                max_tokens=400
+                max_completion_tokens=400
             )
             
             content = response.strip()
@@ -703,7 +703,7 @@ Please analyze the provided page images carefully and answer the question.
                 text_prompt=prompt,
                 images=images,
                 model=self.client.get_model_for_document(document.page_count),
-                max_tokens=2000,
+                max_completion_tokens=2000,
                 detail="high",
                 temperature=0.3
             )

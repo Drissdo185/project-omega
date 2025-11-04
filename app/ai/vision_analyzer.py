@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from loguru import logger
 
-from processors.document import (
+from app.processors.document import (
     Document,
     Page,
     TableInfo,
@@ -15,7 +15,7 @@ from processors.document import (
     TableInfoWithPage,
     ChartInfoWithPage,
 )
-from openai import OpenAIClient
+from app.ai.openai import OpenAIClient
 
 
 class VisionAnalyzer:
@@ -26,7 +26,7 @@ class VisionAnalyzer:
         
         if storage_root is None:
             import os
-            storage_root = os.environ.get("FLEX_RAG_DATA_LOCATION", "../../flex_rag_data_location")
+            storage_root = os.environ.get("FLEX_RAG_DATA_LOCATION", "/flex_rag_data_location")
         
         self.storage_root = Path(storage_root)
         self.documents_dir = self.storage_root / "documents"
@@ -44,6 +44,7 @@ class VisionAnalyzer:
             prompt = f"""Analyze this document page (page {page_number}) and extract:
 
 1. **Page Summary**: Write a comprehensive 2-3 sentence summary of the main content on this page.
+    - If content continues, note that in the summary (e.g., "Content continues on next page").
 
 2. **Tables**: Identify ALL tables on this page. For each table:
    - Assign table_id as "table_{page_number}_N" (N = 1, 2, 3...)
@@ -82,7 +83,7 @@ If there are no tables or charts, use empty arrays []."""
                 text_prompt=prompt,
                 images=[base64_image],
                 model=self.client.model_small,
-                max_tokens=1500,
+                max_completion_tokens=1500,
                 detail="high"
             )
 
@@ -170,7 +171,7 @@ Return ONLY valid JSON:
                 text_prompt=prompt,
                 images=images,
                 model=self.client.model_large,
-                max_tokens=500,
+                max_completion_tokens=500,
                 detail="low",  # Use low detail for partition overview
                 temperature=0.3
             )

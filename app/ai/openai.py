@@ -39,7 +39,7 @@ class OpenAIClient:
         self,
         messages: List[Dict],
         model: Optional[str] = None,
-        max_tokens: int = 2000,
+        max_completion_tokens: int = 2000,
         temperature: float = 0.3
     ) -> str:
         """
@@ -48,7 +48,7 @@ class OpenAIClient:
         Args:
             messages: Chat messages in OpenAI format
             model: Model to use (defaults to model_qa)
-            max_tokens: Maximum tokens in response
+            max_completion_tokens: Maximum tokens in response
             temperature: Sampling temperature
             
         Returns:
@@ -61,7 +61,7 @@ class OpenAIClient:
             response = await self.client.chat.completions.create(
                 model=model,
                 messages=messages,
-                max_tokens=max_tokens,
+                max_completion_tokens=max_completion_tokens,
                 temperature=temperature
             )
             
@@ -76,7 +76,7 @@ class OpenAIClient:
         text_prompt: str,
         images: List[str],  # List of base64 encoded images
         model: Optional[str] = None,
-        max_tokens: int = 1500,
+        max_completion_tokens: int = 1500,
         temperature: float = 0.3,
         detail: str = "high"
     ) -> str:
@@ -87,7 +87,7 @@ class OpenAIClient:
             text_prompt: Text prompt
             images: List of base64 encoded images
             model: Model to use
-            max_tokens: Maximum tokens in response
+            max_completion_tokens: Maximum tokens in response
             temperature: Sampling temperature
             detail: Image detail level ("low" or "high")
             
@@ -118,7 +118,7 @@ class OpenAIClient:
                         "content": content
                     }
                 ],
-                max_tokens=max_tokens,
+                max_completion_tokens=max_completion_tokens,
                 temperature=temperature
             )
             
