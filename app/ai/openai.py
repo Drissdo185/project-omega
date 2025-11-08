@@ -13,12 +13,16 @@ class OpenAIClient:
         if not self.api_key:
             raise ValueError("OpenAI API key not provided")
         
-        self.client = AsyncOpenAI(api_key=self.api_key)
+        # Use custom API endpoint
+        self.client = AsyncOpenAI(
+            api_key=self.api_key,
+            base_url="https://aiportalapi.stu-platform.live/use"
+        )
         
         # Model selection based on document size
-        self.model_small = "gpt-4o-mini-2024-07-18"  # For ≤20 pages
-        self.model_large = "gpt-5-mini-2025-08-07"  # For >20 pages
-        self.model_qa = "gpt-4o-mini-2024-07-18"      # For Q&A
+        self.model_small = "Gemini-2.5-Flash"  # For ≤20 pages
+        self.model_large = "Gemini-2.5-Flash"  # For >20 pages
+        self.model_qa = "Gemini-2.5-Flash"      # For Q&A
     
     def get_model_for_document(self, page_count: int) -> str:
         """

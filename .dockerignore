@@ -1,0 +1,104 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+.virtualenv
+
+# Environment variables (will be set in docker-compose)
+.env
+.env.*
+!.env.example
+
+# IDE & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Application runtime data (created in container)
+uploads/
+temp_uploads/
+logs/
+*.log
+app.log
+
+# Data directories (created/mounted in container)
+app/flex_rag_data_location/
+flex_rag_data_location/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Testing (exclude all test files and coverage reports)
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+*.cover
+.hypothesis/
+pytest.ini
+pytest_cache/
+coverage.xml
+.coveragerc
+test-results/
+.test/
+
+# Documentation (not needed in container)
+*.md
+!README.md
+ARCHITECTURE.md
+CLAUDE.md
+DOCKER_DEPLOYMENT.md
+DOCKER_README.md
+README_CHAT.md
+TESTING.md
+TESTING_QUICK_REFERENCE.md
+ERROR_HANDLING_REVIEW.md
+PRESENTATION.md
+
+# Docker files (not needed inside image)
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# Example/demo files
+chat_example.py
+examples/
+demo/
+test_*.py
+*_test.py
+
+# Backup files
+*.bak
+*.orig
+*.tmp
+*~

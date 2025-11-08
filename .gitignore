@@ -139,6 +139,7 @@ logs/
 
 # Data outputs
 uploads/
+temp_uploads/
 temp/
 tmp/
 *.tmp

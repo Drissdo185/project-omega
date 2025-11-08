@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  vision-gpt5-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vision-gpt5-pdf-assistant
+    ports:
+      - "8080:8080"
+    environment:      
+      # Application settings
+      - FLEX_RAG_DATA_LOCATION=/app/app/flex_rag_data_location
+      - PYTHONUNBUFFERED=1
+      
+      # Streamlit settings (optional)
+      - STREAMLIT_SERVER_PORT=8080
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+    
+    volumes:
+      # Persist uploaded documents
+      - ./uploads:/app/uploads
+      
+      # Persist processed documents and cache
+      - ./app/flex_rag_data_location:/app/app/flex_rag_data_location
+      
+      # Persist logs
+      - ./logs:/app/logs
+      
+      # Optional: Mount .env file for local development
+      # - ./.env:/app/.env:ro
+    
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    networks:
+      - vision-gpt5-network
+
+networks:
+  vision-gpt5-network:
+    driver: bridge
