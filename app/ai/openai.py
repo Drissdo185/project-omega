@@ -17,13 +17,13 @@ class OpenAIClient:
         # self.client = AsyncOpenAI(api_key=self.api_key)
         
         self.client = AsyncOpenAI(
-            base_url="https://aiportalapi.stu-platform.live/use",
-            api_key="sk-OmIsWJqVopXXl7IvkBTPjQ"
+            base_url="",
+            api_key=""
 )
         
         self.client2 = AsyncOpenAI(
-            base_url="https://aiportalapi.stu-platform.live/use",
-            api_key="sk-Eji3sYeCOh9nMhovCbAgNw"
+            base_url="",
+            api_key=""
 )
         
         # # Model selection based on document size
