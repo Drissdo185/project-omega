@@ -24,6 +24,12 @@ tiktoken>=0.4.0
 
 # Vision-based RAG (new)
 PyMuPDF>=1.23.0           # PDF to image conversion (fitz)
-Pillow>=10.0.0            # Image processing    
+Pillow>=10.0.0            # Image processing 
+
+
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+pytest-mock>=3.11.0  
 
 

@@ -80,9 +80,15 @@ class OpenAIClient:
                 max_completion_tokens=max_completion_tokens,
                 temperature=temperature
             )
-            
-            return response.choices[0].message.content.strip()
-        
+
+            # Handle None content from API
+            content = response.choices[0].message.content
+            if content is None:
+                logger.error("OpenAI API returned None content")
+                raise ValueError("OpenAI API returned None content")
+
+            return content.strip()
+
         except Exception as e:
             logger.error(f"OpenAI API error: {e}")
             raise

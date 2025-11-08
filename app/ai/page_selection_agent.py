@@ -67,6 +67,40 @@ class PageSelectionAgent:
             logger.error(f"[{context}] JSON parsing failed at position {e.pos}")
             logger.error(f"[{context}] Error: {e.msg}")
             logger.error(f"[{context}] Problematic content around error:\n{content[max(0, e.pos-100):e.pos+100]}")
+
+            # Attempt to fix truncated JSON
+            if "Unterminated string" in e.msg or "Expecting" in e.msg:
+                logger.warning(f"[{context}] Attempting to fix truncated JSON...")
+                try:
+                    # Try to close unterminated strings and objects
+                    fixed_content = content
+
+                    # Count braces and brackets to determine what's missing
+                    open_braces = fixed_content.count('{') - fixed_content.count('}')
+                    open_brackets = fixed_content.count('[') - fixed_content.count(']')
+
+                    # Check if we're inside a string by counting quotes
+                    quote_count = fixed_content.count('"')
+                    in_string = quote_count % 2 == 1
+
+                    if in_string:
+                        # Close the string
+                        fixed_content += '"'
+
+                    # Close missing brackets
+                    fixed_content += ']' * open_brackets
+
+                    # Close missing braces
+                    fixed_content += '}' * open_braces
+
+                    logger.debug(f"[{context}] Fixed JSON:\n{fixed_content}")
+                    result = json.loads(fixed_content)
+                    logger.info(f"[{context}] Successfully recovered from truncated JSON")
+                    return result
+
+                except Exception as fix_error:
+                    logger.error(f"[{context}] Failed to fix truncated JSON: {fix_error}")
+
             logger.error(f"[{context}] Full response:\n{response}")
             raise
     
