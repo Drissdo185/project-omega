@@ -292,6 +292,14 @@ class Document:
             partitions=[Partition.from_dict(p) for p in data.get("partitions", [])]
         )
 
+    @classmethod
+    def from_json_file(cls, json_file_path: str) -> 'Document':
+        """Load document from JSON file"""
+        import json
+        with open(json_file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return cls.from_dict(data)
+
     def is_large_document(self) -> bool:
         """Check if document should use partition-based approach (>20 pages)"""
         return self.page_count > 20

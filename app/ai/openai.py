@@ -1,8 +1,9 @@
 # ai/openai.py
 import os
 from typing import List, Dict, Optional
-from openai import AsyncOpenAI
+import openai
 from loguru import logger
+from openai import AsyncOpenAI
 
 
 class OpenAIClient:
@@ -13,12 +14,27 @@ class OpenAIClient:
         if not self.api_key:
             raise ValueError("OpenAI API key not provided")
         
-        self.client = AsyncOpenAI(api_key=self.api_key)
+        # self.client = AsyncOpenAI(api_key=self.api_key)
         
-        # Model selection based on document size
-        self.model_small = "gpt-4o-mini-2024-07-18"  # For ≤20 pages
-        self.model_large = "gpt-5-mini-2025-08-07"  # For >20 pages
-        self.model_qa = "gpt-4o-mini-2024-07-18"      # For Q&A
+        self.client = AsyncOpenAI(
+            base_url="https://aiportalapi.stu-platform.live/use",
+            api_key="sk-OmIsWJqVopXXl7IvkBTPjQ"
+)
+        
+        self.client2 = AsyncOpenAI(
+            base_url="https://aiportalapi.stu-platform.live/use",
+            api_key="sk-Eji3sYeCOh9nMhovCbAgNw"
+)
+        
+        # # Model selection based on document size
+        # self.model_small = "gpt-4o-mini-2024-07-18"  # For ≤20 pages
+        # self.model_large = "gpt-5-mini-2025-08-07"  # For >20 pages
+        # self.model_qa = "gpt-4o-mini-2024-07-18"      # For Q&A
+        
+         # Model selection based on document size
+        self.model_small = "Gemini-2.5-Flash"  # For ≤20 pages
+        self.model_large = "Gemini-2.5-Flash"  # For >20 pages
+        self.model_qa = "Gemini-2.5-Flash"      # For Q&A
     
     def get_model_for_document(self, page_count: int) -> str:
         """
@@ -76,7 +92,7 @@ class OpenAIClient:
         text_prompt: str,
         images: List[str],  # List of base64 encoded images
         model: Optional[str] = None,
-        max_completion_tokens: int = 1500,
+        max_completion_tokens: int = 800,
         temperature: float = 0.3,
         detail: str = "high"
     ) -> str:
@@ -111,6 +127,63 @@ class OpenAIClient:
                 })
             
             response = await self.client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": content
+                    }
+                ],
+                max_completion_tokens=max_completion_tokens,
+                temperature=temperature
+            )
+            
+            return response.choices[0].message.content.strip()
+        
+        except Exception as e:
+            logger.error(f"OpenAI Vision API error: {e}")
+            raise
+        
+    async def vision_completion2(
+        self,
+        text_prompt: str,
+        images: List[str],  # List of base64 encoded images
+        model: Optional[str] = None,
+        max_completion_tokens: int = 1500,
+        temperature: float = 0.3,
+        detail: str = "high"
+    ) -> str:
+        """
+        Vision completion with images
+        
+        Args:
+            text_prompt: Text prompt
+            images: List of base64 encoded images
+            model: Model to use
+            max_completion_tokens: Maximum tokens in response
+            temperature: Sampling temperature
+            detail: Image detail level ("low" or "high")
+            
+        Returns:
+            Response content as string
+        """
+        if model is None:
+            model = self.model_qa
+        
+        try:
+            # Build content with text and images
+            content = [{"type": "text", "text": text_prompt}]
+            
+            for img_base64 in images:
+                content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{img_base64}",
+                        "detail": detail
+                    }
+                })
+            
+            response = await self.client2.chat.completions.create(
                 model=model,
                 messages=[
                     {

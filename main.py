@@ -43,6 +43,71 @@ if "processing" not in st.session_state:
     st.session_state.processing = False
 
 
+def get_storage_root() -> Path:
+    """Get the storage root directory"""
+    storage_root = os.environ.get("FLEX_RAG_DATA_LOCATION", "/flex_rag_data_location")
+    return Path(storage_root)
+
+
+def list_processed_documents() -> list:
+    """List all processed documents from storage"""
+    storage_root = get_storage_root()
+    documents_dir = storage_root / "documents"
+    
+    if not documents_dir.exists():
+        return []
+    
+    document_list = []
+    
+    # Iterate through document directories
+    for doc_dir in documents_dir.iterdir():
+        if doc_dir.is_dir():
+            metadata_path = doc_dir / "metadata.json"
+            
+            if metadata_path.exists():
+                try:
+                    with open(metadata_path, 'r', encoding='utf-8') as f:
+                        metadata = json.load(f)
+                    
+                    document_list.append({
+                        "id": doc_dir.name,
+                        "name": metadata.get("name", "Unknown"),
+                        "page_count": metadata.get("page_count", 0),
+                        "created_at": metadata.get("created_at", ""),
+                        "status": metadata.get("status", "unknown"),
+                        "path": doc_dir
+                    })
+                except Exception as e:
+                    logger.error(f"Error reading metadata from {metadata_path}: {e}")
+    
+    # Sort by created_at (newest first)
+    document_list.sort(key=lambda x: x["created_at"], reverse=True)
+    
+    return document_list
+
+
+def load_document_from_storage(doc_id: str) -> Document:
+    """Load a document from storage"""
+    storage_root = get_storage_root()
+    documents_dir = storage_root / "documents"
+    doc_dir = documents_dir / doc_id
+    
+    if not doc_dir.exists():
+        raise FileNotFoundError(f"Document directory not found: {doc_dir}")
+    
+    metadata_path = doc_dir / "metadata.json"
+    
+    if not metadata_path.exists():
+        raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
+    
+    # Load document from metadata
+    document = Document.from_json_file(str(metadata_path))
+    
+    logger.info(f"Loaded document: {document.name} ({document.page_count} pages)")
+    
+    return document
+
+
 async def process_pdf(pdf_file, openai_api_key: str) -> Document:
     """Process uploaded PDF file"""
     
@@ -113,9 +178,14 @@ async def answer_question(question: str, document: Document, openai_client: Open
     
     # Answer question
     with st.spinner("💭 Generating answer..."):
-        result = await agent.answer_question(document, question, selected_pages)
+        answer = await agent.answer_question(document, question, selected_pages)
     
-    return result
+    # Return in format compatible with chat display
+    return {
+        "answer": answer,
+        "pages_used": [p.page_number for p in selected_pages],
+        "confidence": "medium"  # Default since we're not getting this from the new implementation
+    }
 
 
 def display_document_info(document: Document):
@@ -181,7 +251,7 @@ def main():
     # Get API key from environment
     openai_api_key = os.environ.get("OPENAI_API_KEY", "")
 
-    # Sidebar - Configuration
+    # Sidebar - Configuration & Document Selection
     with st.sidebar:
         st.header("⚙️ Configuration")
 
@@ -193,12 +263,64 @@ def main():
 
         st.divider()
 
+        # Document Management Section
+        st.header("📚 Document Management")
+        
+        # Tab for selecting between new upload or existing document
+        doc_mode = st.radio(
+            "Choose mode:",
+            ["📁 Load Existing Document", "📤 Upload New Document"],
+            index=0 if st.session_state.document is None else 1
+        )
+        
+        if doc_mode == "📁 Load Existing Document":
+            # List processed documents
+            processed_docs = list_processed_documents()
+            
+            if processed_docs:
+                st.subheader(f"Found {len(processed_docs)} documents")
+                
+                # Create selection list
+                doc_options = [
+                    f"{doc['name']} ({doc['page_count']} pages) - {doc['created_at'][:10]}"
+                    for doc in processed_docs
+                ]
+                
+                selected_doc_index = st.selectbox(
+                    "Select a document:",
+                    range(len(doc_options)),
+                    format_func=lambda i: doc_options[i],
+                    key="doc_selector"
+                )
+                
+                if st.button("📂 Load Selected Document", type="primary", use_container_width=True):
+                    try:
+                        selected_doc = processed_docs[selected_doc_index]
+                        document = load_document_from_storage(selected_doc["id"])
+                        st.session_state.document = document
+                        st.session_state.chat_history = []  # Clear chat history for new document
+                        st.success(f"✅ Loaded: {document.name}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error loading document: {str(e)}")
+                        logger.error(f"Error loading document: {e}")
+            else:
+                st.info("No processed documents found. Upload a new document to get started.")
+        
+        st.divider()
+
         # Current document info
         if st.session_state.document:
             st.header("📄 Current Document")
             st.success(f"✅ {st.session_state.document.name}")
+            
+            # Show document stats
+            doc = st.session_state.document
+            st.caption(f"📄 {doc.page_count} pages")
+            if doc.has_partitions():
+                st.caption(f"📑 {len(doc.partitions)} partitions")
 
-            if st.button("🗑️ Clear Document"):
+            if st.button("🗑️ Clear Document", use_container_width=True):
                 st.session_state.document = None
                 st.session_state.chat_history = []
                 st.rerun()
@@ -207,55 +329,80 @@ def main():
     
     # Main content area
     if not st.session_state.document:
-        # Upload section
-        st.header("1️⃣ Upload PDF Document")
+        # Show appropriate interface based on mode
+        if doc_mode == "📤 Upload New Document":
+            # Upload section
+            st.header("1️⃣ Upload PDF Document")
 
-        uploaded_file = st.file_uploader(
-            "Choose a PDF file",
-            type=["pdf"],
-            help="Upload a PDF document to analyze"
-        )
+            uploaded_file = st.file_uploader(
+                "Choose a PDF file",
+                type=["pdf"],
+                help="Upload a PDF document to analyze"
+            )
 
-        st.divider()
+            st.divider()
 
-        # Show process button section
-        if uploaded_file:
-            st.subheader("2️⃣ Process Document")
+            # Show process button section
+            if uploaded_file:
+                st.subheader("2️⃣ Process Document")
 
-            if not openai_api_key:
-                st.error("❌ OPENAI_API_KEY not found in environment")
-                st.info("Please set your OPENAI_API_KEY environment variable before running the app")
+                if not openai_api_key:
+                    st.error("❌ OPENAI_API_KEY not found in environment")
+                    st.info("Please set your OPENAI_API_KEY environment variable before running the app")
+                else:
+                    st.info(f"📄 Ready to process: **{uploaded_file.name}**")
+
+                    col1, col2, col3 = st.columns([1, 2, 1])
+                    with col2:
+                        if st.button(
+                            "🚀 Process Document with AI",
+                            type="primary",
+                            disabled=st.session_state.processing or not openai_api_key,
+                            use_container_width=True
+                        ):
+                            st.session_state.processing = True
+
+                            try:
+                                # Process PDF
+                                document = asyncio.run(process_pdf(uploaded_file, openai_api_key))
+                                st.session_state.document = document
+                                st.session_state.processing = False
+
+                                st.success("✅ Document processed successfully!")
+                                st.rerun()
+
+                            except Exception as e:
+                                st.error(f"❌ Error processing document: {str(e)}")
+                                logger.error(f"Processing error: {e}")
+                                st.session_state.processing = False
+
+                    if st.session_state.processing:
+                        st.warning("⏳ Processing in progress... Please wait.")
             else:
-                st.info(f"📄 Ready to process: **{uploaded_file.name}**")
-
-                col1, col2, col3 = st.columns([1, 2, 1])
-                with col2:
-                    if st.button(
-                        "🚀 Process Document with AI",
-                        type="primary",
-                        disabled=st.session_state.processing or not openai_api_key,
-                        use_container_width=True
-                    ):
-                        st.session_state.processing = True
-
-                        try:
-                            # Process PDF
-                            document = asyncio.run(process_pdf(uploaded_file, openai_api_key))
-                            st.session_state.document = document
-                            st.session_state.processing = False
-
-                            st.success("✅ Document processed successfully!")
-                            st.rerun()
-
-                        except Exception as e:
-                            st.error(f"❌ Error processing document: {str(e)}")
-                            logger.error(f"Processing error: {e}")
-                            st.session_state.processing = False
-
-                if st.session_state.processing:
-                    st.warning("⏳ Processing in progress... Please wait.")
+                st.info("👆 Please upload a PDF file to get started")
         else:
-            st.info("👆 Please upload a PDF file to get started")
+            # Show instructions for loading existing documents
+            st.info("👈 Use the sidebar to select and load an existing document")
+            
+            # Show available documents preview
+            processed_docs = list_processed_documents()
+            if processed_docs:
+                st.subheader(f"📚 Available Documents ({len(processed_docs)})")
+                
+                # Display documents in a nice format
+                for doc in processed_docs[:5]:  # Show first 5
+                    with st.container():
+                        col1, col2, col3 = st.columns([3, 1, 1])
+                        with col1:
+                            st.write(f"**{doc['name']}**")
+                        with col2:
+                            st.write(f"📄 {doc['page_count']} pages")
+                        with col3:
+                            st.write(f"📅 {doc['created_at'][:10]}")
+                        st.divider()
+                
+                if len(processed_docs) > 5:
+                    st.caption(f"...and {len(processed_docs) - 5} more documents")
     
     else:
         # Document loaded - Show Q&A interface

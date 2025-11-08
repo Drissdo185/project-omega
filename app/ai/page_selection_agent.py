@@ -17,7 +17,7 @@ class PageSelectionAgent:
     
     def __init__(self, openai_client: OpenAIClient, storage_root: str = None):
         self.client = openai_client
-        self.max_pages_to_analyze = 5  # Maximum pages to send to final Q&A
+        self.max_pages_to_analyze = 10  # Maximum pages to send to final Q&A
         self.max_partitions = 2  # Maximum partitions to select for large docs
         
         if storage_root is None:
@@ -31,6 +31,44 @@ class PageSelectionAgent:
         """Encode image to base64"""
         with open(image_path, "rb") as image_file:
             return base64.b64encode(image_file.read()).decode('utf-8')
+    
+    def _parse_json_response(self, response: str, context: str = "") -> dict:
+        """
+        Safely parse JSON from LLM response with better error handling
+        
+        Args:
+            response: Raw response string from LLM
+            context: Context description for better error messages
+            
+        Returns:
+            Parsed JSON dict or raises exception with helpful message
+        """
+        try:
+            content = response.strip()
+            
+            # Remove markdown code blocks
+            if content.startswith("```json"):
+                content = content[7:]
+            elif content.startswith("```"):
+                content = content[3:]
+            
+            if content.endswith("```"):
+                content = content[:-3]
+            
+            content = content.strip()
+            
+            # Log cleaned content for debugging
+            logger.debug(f"[{context}] Cleaned content to parse (first 200 chars):\n{content[:200]}...")
+            
+            # Try to parse
+            return json.loads(content)
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"[{context}] JSON parsing failed at position {e.pos}")
+            logger.error(f"[{context}] Error: {e.msg}")
+            logger.error(f"[{context}] Problematic content around error:\n{content[max(0, e.pos-100):e.pos+100]}")
+            logger.error(f"[{context}] Full response:\n{response}")
+            raise
     
     def _load_partition_summary(self, document: Document) -> Optional[Dict]:
         """
@@ -123,31 +161,28 @@ Consider:
 
 Select the top {self.max_partitions} most relevant partitions.
 
-Return ONLY valid JSON:
+CRITICAL: Return ONLY a valid JSON object with no additional text before or after.
+Do not include any explanations, preamble, or markdown outside the JSON structure.
+Keep reasoning VERY brief (max 10 words).
+
 {{
   "selected_partitions": [partition_id1, partition_id2],
-  "reasoning": "Brief explanation of why these partitions were selected and what they contain that's relevant"
+  "reasoning": "Very brief reason (max 10 words)"
 }}"""
 
         try:
             response = await self.client.chat_completion(
                 messages=[{"role": "user", "content": prompt}],
                 model=self.client.model_large,
-                max_completion_tokens=500,
+                max_completion_tokens=2000,
                 temperature=0.2
             )
             
-            # Parse response
-            content = response.strip()
-            if content.startswith("```json"):
-                content = content[7:]
-            if content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-            content = content.strip()
+            logger.debug(f"Raw partition selection response:\n{response[:500]}...")
             
-            result = json.loads(content)
+            # Parse response using helper function
+            result = self._parse_json_response(response, context="partition_selection")
+            
             selected_partition_ids = result.get("selected_partitions", [])
             reasoning = result.get("reasoning", "")
             
@@ -156,6 +191,13 @@ Return ONLY valid JSON:
             
             # Ensure we don't select more than max_partitions
             return selected_partition_ids[:self.max_partitions]
+        
+        except json.JSONDecodeError as e:
+            logger.error(f"Partition selection JSON parsing failed: {e}")
+            # Fallback: return first partition(s)
+            fallback = [1, 2] if len(partitions_info) >= 2 else [1]
+            logger.warning(f"Using fallback partitions: {fallback}")
+            return fallback
         
         except Exception as e:
             logger.error(f"Partition selection failed: {e}")
@@ -247,31 +289,28 @@ Consider:
 3. Contextual pages that help understand the answer
 4. Pages that together provide a complete answer
 
-Return ONLY valid JSON:
+CRITICAL: Return ONLY a valid JSON object with no additional text before or after.
+Do not include any explanations, preamble, or markdown outside the JSON structure.
+Keep reasoning VERY brief (max 10 words).
+
 {{
-  "selected_pages": [page_number1, page_number2, page_number3, ...],
-  "reasoning": "Brief explanation of why these specific pages were selected"
+  "selected_pages": [page_number1, page_number2, page_number3],
+  "reasoning": "Very brief reason (max 10 words)"
 }}"""
 
         try:
             response = await self.client.chat_completion(
                 messages=[{"role": "user", "content": prompt}],
                 model=self.client.model_large,
-                max_completion_tokens=600,
+                max_completion_tokens=2000,
                 temperature=0.2
             )
             
-            # Parse response
-            content = response.strip()
-            if content.startswith("```json"):
-                content = content[7:]
-            if content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-            content = content.strip()
+            logger.debug(f"Raw page selection response:\n{response[:500]}...")
             
-            result = json.loads(content)
+            # Parse response using helper function
+            result = self._parse_json_response(response, context="page_selection")
+            
             selected_page_numbers = result.get("selected_pages", [])
             reasoning = result.get("reasoning", "")
             
@@ -289,6 +328,12 @@ Return ONLY valid JSON:
             
             # Limit to max_pages_to_analyze
             return selected_pages[:self.max_pages_to_analyze]
+        
+        except json.JSONDecodeError as e:
+            logger.error(f"Page selection JSON parsing failed: {e}")
+            # Fallback: return first N candidate pages
+            logger.warning(f"Using fallback: first {self.max_pages_to_analyze} candidate pages")
+            return candidate_pages[:self.max_pages_to_analyze]
         
         except Exception as e:
             logger.error(f"Page selection within partitions failed: {e}")
@@ -350,31 +395,28 @@ Consider:
 - Tables or charts that might contain relevant data
 - Context needed to understand the answer
 
-Return ONLY valid JSON:
+CRITICAL: Return ONLY a valid JSON object with no additional text before or after.
+Do not include any explanations, preamble, or markdown outside the JSON structure.
+Keep reasoning VERY brief (max 10 words).
+
 {{
-  "selected_pages": [page_number1, page_number2, ...],
-  "reasoning": "Brief explanation of why these pages were selected"
+  "selected_pages": [page_number1, page_number2],
+  "reasoning": "Very brief reason (max 10 words)"
 }}"""
 
         try:
             response = await self.client.chat_completion(
                 messages=[{"role": "user", "content": prompt}],
                 model=self.client.model_small,
-                max_completion_tokens=500,
+                max_completion_tokens=2000,
                 temperature=0.2
             )
             
-            # Parse response
-            content = response.strip()
-            if content.startswith("```json"):
-                content = content[7:]
-            if content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-            content = content.strip()
+            logger.debug(f"Raw small doc page selection response:\n{response[:500]}...")
             
-            result = json.loads(content)
+            # Parse response using helper function
+            result = self._parse_json_response(response, context="small_doc_page_selection")
+            
             selected_page_numbers = result.get("selected_pages", [])
             reasoning = result.get("reasoning", "")
             
@@ -391,6 +433,12 @@ Return ONLY valid JSON:
             selected_pages.sort(key=lambda p: p.page_number)
             
             return selected_pages[:self.max_pages_to_analyze]
+        
+        except json.JSONDecodeError as e:
+            logger.error(f"Small doc page selection JSON parsing failed: {e}")
+            # Fallback: return first N pages
+            logger.warning(f"Falling back to first {self.max_pages_to_analyze} pages")
+            return document.pages[:self.max_pages_to_analyze]
         
         except Exception as e:
             logger.error(f"Page selection failed: {e}")
@@ -478,29 +526,27 @@ Here are document partition summaries:
 
 Select the top {self.max_partitions} most relevant partitions to answer this question.
 
-Return ONLY valid JSON:
+CRITICAL: Return ONLY a valid JSON object with no additional text before or after.
+Keep reasoning VERY brief (max 10 words).
+
 {{
   "selected_partitions": [partition_id1, partition_id2],
-  "reasoning": "Brief explanation"
+  "reasoning": "Very brief reason (max 10 words)"
 }}"""
 
         try:
             response = await self.client.chat_completion(
                 messages=[{"role": "user", "content": prompt}],
                 model=self.client.model_large,
-                max_completion_tokens=300
+                max_completion_tokens=2000,
+                temperature=0.2
             )
             
-            content = response.strip()
-            if content.startswith("```json"):
-                content = content[7:]
-            if content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-            content = content.strip()
+            logger.debug(f"Raw fallback partition selection response:\n{response[:500]}...")
             
-            result = json.loads(content)
+            # Parse response using helper function
+            result = self._parse_json_response(response, context="fallback_partition_selection")
+            
             selected_partition_ids = result.get("selected_partitions", [1])
             
             logger.info(f"Selected partitions (fallback): {selected_partition_ids}")
@@ -538,29 +584,27 @@ Here are pages from relevant partitions:
 
 Select the top {self.max_pages_to_analyze} most relevant pages.
 
-Return ONLY valid JSON:
+CRITICAL: Return ONLY a valid JSON object with no additional text before or after.
+Keep reasoning VERY brief (max 10 words).
+
 {{
-  "selected_pages": [page_number1, page_number2, ...],
-  "reasoning": "Brief explanation"
+  "selected_pages": [page_number1, page_number2],
+  "reasoning": "Very brief reason (max 10 words)"
 }}"""
 
         try:
             response = await self.client.chat_completion(
                 messages=[{"role": "user", "content": prompt}],
                 model=self.client.model_large,
-                max_completion_tokens=400
+                max_completion_tokens=2000,
+                temperature=0.2
             )
             
-            content = response.strip()
-            if content.startswith("```json"):
-                content = content[7:]
-            if content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-            content = content.strip()
+            logger.debug(f"Raw fallback page selection response:\n{response[:500]}...")
             
-            result = json.loads(content)
+            # Parse response using helper function
+            result = self._parse_json_response(response, context="fallback_page_selection")
+            
             selected_page_numbers = result.get("selected_pages", [])
             
             selected_pages = [
@@ -615,7 +659,7 @@ Return ONLY valid JSON:
         document: Document,
         question: str,
         selected_pages: List[Page]
-    ) -> Dict[str, any]:
+    ) -> str:
         """
         Answer question using selected pages
         
@@ -625,12 +669,7 @@ Return ONLY valid JSON:
             selected_pages: Pre-selected relevant pages
             
         Returns:
-            {
-                "answer": "Answer text",
-                "pages_used": [page_numbers],
-                "confidence": "high/medium/low",
-                "selected_pages": [page_numbers shown]
-            }
+            Plain text answer
         """
         logger.info(f"💭 Answering question with {len(selected_pages)} pages")
         
@@ -646,12 +685,7 @@ Return ONLY valid JSON:
                 logger.error(f"Failed to encode page {page.page_number}: {e}")
         
         if not images:
-            return {
-                "answer": "❌ Error: Could not load page images",
-                "pages_used": [],
-                "confidence": "low",
-                "selected_pages": page_numbers
-            }
+            return "❌ Error: Could not load page images"
         
         # Build context from page summaries
         context = []
@@ -670,7 +704,7 @@ Return ONLY valid JSON:
         
         context_text = "\n".join(context)
         
-        # Build prompt
+        # Build prompt - NO JSON format requirement
         prompt = f"""You are analyzing a document to answer a user's question.
 
 **Document:** {document.name}
@@ -686,17 +720,11 @@ Please analyze the provided page images carefully and answer the question.
 
 **Instructions:**
 - Provide a clear, comprehensive, and detailed answer
-- Reference specific page numbers when citing information (e.g., "On page 5...")
+- Reference specific page numbers when citing information (e.g., "According to page 5...")
 - If referring to tables or charts, mention them specifically
 - If the answer is not found in these pages, state that clearly
-- Assess your confidence level based on how well these pages answer the question
-
-**Format your response as JSON:**
-{{
-  "answer": "Your detailed answer here, referencing specific pages...",
-  "confidence": "high/medium/low",
-  "pages_referenced": [list of page numbers you actually used in your answer]
-}}"""
+- Write in a natural, conversational style
+- Answer directly without any preamble or JSON formatting"""
 
         try:
             response = await self.client.vision_completion(
@@ -708,40 +736,16 @@ Please analyze the provided page images carefully and answer the question.
                 temperature=0.3
             )
             
-            # Parse response
-            content = response.strip()
-            if content.startswith("```json"):
-                content = content[7:]
-            if content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-            content = content.strip()
+            answer = response.strip()
             
-            try:
-                result = json.loads(content)
-                
-                return {
-                    "answer": result.get("answer", response),
-                    "pages_used": result.get("pages_referenced", page_numbers),
-                    "confidence": result.get("confidence", "medium"),
-                    "selected_pages": page_numbers
-                }
-            except json.JSONDecodeError:
-                # If JSON parsing fails, return raw response
-                logger.warning("Could not parse JSON response, using raw answer")
-                return {
-                    "answer": response,
-                    "pages_used": page_numbers,
-                    "confidence": "medium",
-                    "selected_pages": page_numbers
-                }
+            # Log metadata for debugging (but don't return it)
+            logger.info(f"✅ Generated answer ({len(answer)} characters)")
+            logger.info(f"📄 Pages analyzed: {page_numbers}")
+            logger.info(f"📊 Document: {document.name} ({document.page_count} total pages)")
+            
+            # Return plain text only
+            return answer
         
         except Exception as e:
             logger.error(f"Failed to answer question: {e}")
-            return {
-                "answer": f"❌ Error processing question: {str(e)}",
-                "pages_used": page_numbers,
-                "confidence": "low",
-                "selected_pages": page_numbers
-            }
+            return f"❌ Error processing question: {str(e)}"

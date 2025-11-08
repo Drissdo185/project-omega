@@ -151,42 +151,80 @@ If there are no tables or charts, use empty arrays []."""
             
             prompt = f"""Analyze this document partition (Partition {partition_id}: Pages {page_range[0]}-{page_range[1]}).
 
-Total pages in partition: {len(pages)}
-{"You are viewing all pages." if len(pages) <= max_images else f"You are viewing a sample of {len(sample_pages)} pages."}
+    Total pages in partition: {len(pages)}
+    {"You are viewing all pages." if len(pages) <= max_images else f"You are viewing a sample of {len(sample_pages)} pages."}
 
-Individual page summaries:
-{page_summaries_context}
+    Individual page summaries:
+    {page_summaries_context}
 
-Based on the page images and summaries, provide a comprehensive 2-3 sentence summary that:
-- Captures the main topics and themes covered in this partition
-- Highlights key information, data, or findings presented
-- Describes the overall purpose or focus of this section
+    Based on the page images and summaries, provide a comprehensive 2-3 sentence summary that:
+    - Captures the main topics and themes covered in this partition
+    - Highlights key information, data, or findings presented
+    - Describes the overall purpose or focus of this section
 
-Return ONLY valid JSON:
-{{
-  "summary": "2-3 sentence comprehensive summary of this partition..."
-}}"""
+    IMPORTANT: Return ONLY valid JSON with no markdown formatting or additional text.
+    Return in this exact format:
+    {{
+    "summary": "Your 2-3 sentence summary here"
+    }}"""
 
-            response = await self.client.vision_completion(
+            
+            response = await self.client.vision_completion2(
                 text_prompt=prompt,
                 images=images,
-                model=self.client.model_large,
-                max_completion_tokens=500,
-                detail="low",  # Use low detail for partition overview
+                model="Gemini-2.5-Flash",
+                max_completion_tokens=2000,
+                detail="auto",
                 temperature=0.3
             )
 
-            # Parse JSON
+            # IMPROVED: More robust JSON parsing
             content = response.strip()
+            
+            # Log raw response for debugging
+            logger.debug(f"Raw response from Gemini: {content[:200]}...")
+            
+            # Remove markdown code fences
             if content.startswith("```json"):
                 content = content[7:]
-            if content.startswith("```"):
+            elif content.startswith("```"):
                 content = content[3:]
+            
             if content.endswith("```"):
                 content = content[:-3]
+            
             content = content.strip()
             
-            result = json.loads(content)
+            # Additional cleaning: remove any leading/trailing text that's not JSON
+            # Find the first { and last }
+            start_idx = content.find('{')
+            end_idx = content.rfind('}')
+            
+            if start_idx == -1 or end_idx == -1:
+                logger.error(f"No valid JSON object found in response: {content[:200]}")
+                return {"summary": ""}
+            
+            content = content[start_idx:end_idx + 1]
+            
+            # Try to parse JSON
+            try:
+                result = json.loads(content)
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON decode error: {e}")
+                logger.error(f"Problematic content: {content[:500]}")
+                
+                # FALLBACK: Try to extract summary using regex if JSON parsing fails
+                import re
+                match = re.search(r'"summary"\s*:\s*"([^"]*(?:\\.[^"]*)*)"', content)
+                if match:
+                    summary = match.group(1)
+                    # Unescape the string
+                    summary = summary.encode().decode('unicode_escape')
+                    result = {"summary": summary}
+                    logger.warning(f"Used regex fallback to extract summary")
+                else:
+                    logger.error(f"Failed to extract summary with regex fallback")
+                    return {"summary": ""}
             
             logger.info(f"✅ Analyzed partition {partition_id} (pages {page_range[0]}-{page_range[1]})")
             
@@ -194,6 +232,7 @@ Return ONLY valid JSON:
 
         except Exception as e:
             logger.error(f"Failed to analyze partition {partition_id}: {e}")
+            logger.exception("Full traceback:")
             return {"summary": ""}
 
     async def analyze_document(self, document: Document) -> Document:
